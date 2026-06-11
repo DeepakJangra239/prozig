@@ -1,0 +1,38 @@
+Third-Party Licenses
+====================
+
+This project bundles or links to the following third-party software.
+Licenses are reproduced below for compliance.
+
+---
+
+SQLite3
+-------
+Source: https://sqlite.org/
+Files: deps/include/sqlite3.h, deps/include/sqlite3ext.h
+
+SQLite is in the Public Domain (https://sqlite.org/copyright.html).
+
+  All of the deliverable code in SQLite has been dedicated to the public
+  domain by the authors. All code authors, and representatives of the
+  companies they work for, have signed affidavits dedicating their
+  contributions to the public domain and originals of those signed
+  affidavits are stored in a firesafe at the main offices of Hwaci.
+  Anyone is free to copy, modify, publish, use, compile, sell, or
+  distribute the original SQLite code, either in source code form or as
+  a compiled binary, for any purpose, commercial or non-commercial, and
+  by any means.
+
+---
+
+Zig Standard Library
+--------------------
+Source: https://ziglang.org/
+License: MIT / Apache 2.0 (dual-licensed)
+
+The Zig standard library is used at build time and linked into the
+compiled binary. It is dual-licensed under the MIT License and the
+Apache License, Version 2.0.
+
+  https://github.com/ziglang/zig/blob/master/LICENSE
+  https://github.com/ziglang/zig/blob/master/LICENSE.APACHE2

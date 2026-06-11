@@ -321,6 +321,17 @@ This project targets Zig 0.16.0 which has significant breaking changes from 0.13
 
 See `docs/ZIG-0.16.0-REFERENCE.md` for full migration notes.
 
+## Tech Stack
+
+| Component | Technology | License |
+|-----------|-----------|---------|
+| Language | Zig 0.16.0 | MIT / Apache 2.0 |
+| Database | SQLite3 | Public Domain |
+| Protocol | JSON-RPC 2.0 over stdio | — |
+| Frontend | Vanilla JS + CSS (no framework) | — |
+
+See [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES) for full dependency license details.
+
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE) for full text.
