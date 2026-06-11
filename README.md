@@ -1,7 +1,7 @@
 # Prozig — Local-First MCP Planning Tracker
 
-[![GitHub release](https://img.shields.io/github/v/release/deepakjangra/prozig)](https://github.com/deepakjangra/prozig/releases/latest)
-[![License](https://img.shields.io/github/license/deepakjangra/prozig)](LICENSE)
+[![GitHub release](https://img.shields.io/github/v/release/DeepakJangra239/prozig)](https://github.com/DeepakJangra239/prozig/releases/latest)
+[![License](https://img.shields.io/github/license/DeepakJangra239/prozig)](LICENSE)
 
 **Prozig** is a local-first MCP (Model Context Protocol) server written in **Zig 0.16.0** that acts as a planning tracker for agentic coding harnesses like [pi](https://github.com/nicepkg/pi) and [opencode](https://github.com/opencode-ai/opencode). It manages the full SDLC hierarchy: **Projects → Epics → User Stories → Tasks → SubTasks**, with a built-in Wiki for documentation and an embedded web dashboard.
 
@@ -42,17 +42,17 @@ Project
 
 ### Download (pre-built binary)
 
-Grab the latest binary from [GitHub Releases](https://github.com/deepakjangra/prozig/releases/latest):
+Grab the latest binary from [GitHub Releases](https://github.com/DeepakJangra239/prozig/releases/latest):
 
 ```bash
 # macOS ARM (Apple Silicon)
-curl -L https://github.com/deepakjangra/prozig/releases/latest/download/prozig-v0.1.0-aarch64-macos.tar.gz | tar xz
+curl -L https://github.com/DeepakJangra239/prozig/releases/latest/download/prozig-v0.1.0-aarch64-macos.tar.gz | tar xz
 
 # macOS x86_64 (Intel)
-curl -L https://github.com/deepakjangra/prozig/releases/latest/download/prozig-v0.1.0-x86_64-macos.tar.gz | tar xz
+curl -L https://github.com/DeepakJangra239/prozig/releases/latest/download/prozig-v0.1.0-x86_64-macos.tar.gz | tar xz
 
 # Linux x86_64
-curl -L https://github.com/deepakjangra/prozig/releases/latest/download/prozig-v0.1.0-x86_64-linux.tar.gz | tar xz
+curl -L https://github.com/DeepakJangra239/prozig/releases/latest/download/prozig-v0.1.0-x86_64-linux.tar.gz | tar xz
 
 # Move to PATH
 sudo mv prozig /usr/local/bin/
@@ -65,7 +65,7 @@ prozig dashboard     # Opens http://127.0.0.1:9181
 Requires [Zig 0.16.0](https://ziglang.org/download/) and SQLite3 dev headers:
 
 ```bash
-git clone https://github.com/deepakjangra/prozig.git
+git clone https://github.com/DeepakJangra239/prozig.git
 cd prozig
 zig build -Doptimize=ReleaseSafe
 sudo cp zig-out/bin/prozig /usr/local/bin/
