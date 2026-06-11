@@ -1,5 +1,8 @@
 # Prozig — Local-First MCP Planning Tracker
 
+[![GitHub release](https://img.shields.io/github/v/release/deepakjangra/prozig)](https://github.com/deepakjangra/prozig/releases/latest)
+[![License](https://img.shields.io/github/license/deepakjangra/prozig)](LICENSE)
+
 **Prozig** is a local-first MCP (Model Context Protocol) server written in **Zig 0.16.0** that acts as a planning tracker for agentic coding harnesses like [pi](https://github.com/nicepkg/pi) and [opencode](https://github.com/opencode-ai/opencode). It manages the full SDLC hierarchy: **Projects → Epics → User Stories → Tasks → SubTasks**, with a built-in Wiki for documentation and an embedded web dashboard.
 
 Built with the same philosophy as [OpenAI Symphony](https://github.com/openai/symphony) — let agents do the work, humans review the results. Prozig is the MCP-native tracker that agent orchestrators poll for work.
@@ -37,34 +40,37 @@ Project
 
 ## Quick Start
 
-### Prerequisites
+### Download (pre-built binary)
 
-- **Zig 0.16.0** (`brew install zig@0.16` or download from [ziglang.org](https://ziglang.org/download/))
-- **SQLite3** (`brew install sqlite`)
-- **C library** (Xcode Command Line Tools on macOS, `build-essential` on Linux)
-
-### Build & Run
+Grab the latest binary from [GitHub Releases](https://github.com/deepakjangra/prozig/releases/latest):
 
 ```bash
-# Clone and build
-git clone <repo> && cd prozig
-zig build
+# macOS ARM (Apple Silicon)
+curl -L https://github.com/deepakjangra/prozig/releases/latest/download/prozig-v0.1.0-aarch64-macos.tar.gz | tar xz
 
-# Initialize the database
-./zig-out/bin/prozig init
+# macOS x86_64 (Intel)
+curl -L https://github.com/deepakjangra/prozig/releases/latest/download/prozig-v0.1.0-x86_64-macos.tar.gz | tar xz
 
-# Start MCP server (for AI agents)
-./zig-out/bin/prozig mcp
+# Linux x86_64
+curl -L https://github.com/deepakjangra/prozig/releases/latest/download/prozig-v0.1.0-x86_64-linux.tar.gz | tar xz
 
-# Start web dashboard
-./zig-out/bin/prozig dashboard
-# Opens http://127.0.0.1:9181
+# Move to PATH
+sudo mv prozig /usr/local/bin/
+prozig init
+prozig dashboard     # Opens http://127.0.0.1:9181
 ```
 
-### Release Build
+### Build from source
+
+Requires [Zig 0.16.0](https://ziglang.org/download/) and SQLite3 dev headers:
 
 ```bash
+git clone https://github.com/deepakjangra/prozig.git
+cd prozig
 zig build -Doptimize=ReleaseSafe
+sudo cp zig-out/bin/prozig /usr/local/bin/
+prozig init
+prozig dashboard
 ```
 
 ## Architecture
@@ -167,14 +173,30 @@ prozig/
 
 ### Using with pi
 
-Add to your pi configuration:
+Add to your pi configuration (update the command path to where prozig is installed):
 
 ```json
 {
   "mcpServers": {
     "prozig": {
-      "command": "./zig-out/bin/prozig",
+      "command": "/usr/local/bin/prozig",
       "args": ["mcp"]
+    }
+  }
+}
+```
+
+### Using with opencode
+
+Add to your `opencode.json`:
+
+```json
+{
+  "mcp": {
+    "prozig": {
+      "type": "local",
+      "command": ["/usr/local/bin/prozig", "mcp"],
+      "enabled": true
     }
   }
 }
