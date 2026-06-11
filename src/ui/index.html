@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prozig</title>
+    <link rel="stylesheet" href="https://unpkg.com/@knadh/oat/oat.min.css">
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body data-sidebar-layout="always" data-theme="dark">
+    <nav data-topnav>
+        <button data-sidebar-toggle aria-label="Toggle menu" class="outline icon small">&equiv;</button>
+        <strong>Prozig</strong>
+        <span style="flex:1"></span>
+        <select id="project-select" aria-label="Select project" style="max-width:14rem">
+            <option value="">Select a project&hellip;</option>
+        </select>
+        <button id="btn-new-project" data-variant="primary" class="small">+ New</button>
+    </nav>
+
+    <aside data-sidebar>
+        <nav id="main-nav">
+            <ul>
+                <li><a data-view="dashboard" aria-current="page">Dashboard</a></li>
+                <li><a data-view="board">Board</a></li>
+                <li><a data-view="roles">Roles</a></li>
+                <li><a data-view="workflow">Workflow</a></li>
+                <li><a data-view="wiki">Wiki</a></li>
+                <li><a data-view="agents">Agents</a></li>
+            </ul>
+        </nav>
+        <footer>
+            <p style="margin:0 0 var(--space-2) 0;font-size:var(--text-8);color:var(--muted-foreground);text-transform:uppercase;letter-spacing:0.04em">Project</p>
+            <div id="sidebar-context">
+                <p style="color:var(--muted-foreground);font-size:var(--text-8)">Select a project</p>
+            </div>
+        </footer>
+    </aside>
+
+    <main>
+        <!-- Dashboard View -->
+        <div id="dashboard" class="view active">
+            <div class="view-header">
+                <h3>Dashboard</h3>
+                <button class="outline small" onclick="loadDashboard()">Refresh</button>
+            </div>
+            <div id="stats-row" class="stats-row"></div>
+            <h6 class="section-title">Projects</h6>
+            <div id="project-cards" class="card-grid"></div>
+        </div>
+
+        <!-- Board View -->
+        <div id="board" class="view">
+            <div class="view-header">
+                <div class="breadcrumb" id="board-breadcrumb"></div>
+                <div class="view-actions">
+                    <select id="board-epic-select" class="small" aria-label="Filter by epic" style="max-width:12rem">
+                        <option value="">All Epics</option>
+                    </select>
+                    <select id="board-agent-select" class="small" aria-label="Filter by agent" style="max-width:10rem">
+                        <option value="">All Agents</option>
+                    </select>
+                    <button id="btn-new-story" data-variant="primary" class="small">+ Story</button>
+                    <button id="btn-new-task" data-variant="primary" class="small">+ Task</button>
+                    <button id="btn-new-bug" data-variant="primary" class="small">+ Bug</button>
+                    <button id="btn-new-epic" data-variant="primary" class="small">+ Epic</button>
+                </div>
+            </div>
+            <div id="board-columns" class="board-layout"></div>
+            <div id="bulk-bar" class="bulk-bar">
+                <span class="bulk-count">0</span> selected
+                <select id="bulk-status-select" class="small" aria-label="Transition to">
+                    <option value="">Transition to...</option>
+                    <option value="Backlog">Backlog</option>
+                    <option value="Planned">Planned</option>
+                    <option value="In Progress">In Progress</option>
+                    <option value="In Review">In Review</option>
+                    <option value="In QA">In QA</option>
+                    <option value="UAT">UAT</option>
+                    <option value="Done">Done</option>
+                    <option value="Cancelled">Cancelled</option>
+                </select>
+                <button id="bulk-transition" class="small" data-variant="primary">Transition</button>
+                <button id="bulk-delete" class="small" style="color:var(--danger)">Delete</button>
+                <button id="bulk-clear" class="small outline">Clear</button>
+            </div>
+        </div>
+
+        <!-- Wiki View -->
+        <div id="wiki" class="view">
+            <div class="view-header">
+                <h3>Wiki</h3>
+                <button id="btn-new-page" data-variant="primary" class="small">+ Page</button>
+            </div>
+            <div class="wiki-layout">
+                <div id="wiki-sidebar" class="wiki-sidebar"></div>
+                <div id="wiki-content" class="wiki-content">
+                    <div class="empty-state"><p>Select a project to view wiki pages.</p></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Roles View -->
+        <div id="roles" class="view">
+            <div class="view-header">
+                <h3>Role Manager</h3>
+                <button id="btn-new-role" data-variant="primary" class="small">+ Role</button>
+            </div>
+            <div class="breadcrumb" id="roles-breadcrumb"></div>
+            <div id="roles-list" class="card-grid"></div>
+        </div>
+
+        <!-- Workflow Designer View -->
+        <div id="workflow" class="view">
+            <div class="view-header">
+                <h3>Workflow Designer</h3>
+            </div>
+            <div class="breadcrumb" id="workflow-breadcrumb"></div>
+            <div id="workflow-tabs" class="tabs"></div>
+            <div id="workflow-content"></div>
+        </div>
+
+        <!-- Agents View -->
+        <div id="agents" class="view">
+            <div class="view-header">
+                <h3>Agent Profiles</h3>
+                <button id="btn-new-agent" data-variant="primary" class="small">+ Agent</button>
+            </div>
+            <div id="agent-list" class="card-grid"></div>
+        </div>
+    </main>
+
+    <!-- Modal Dialog -->
+    <dialog id="modal-dialog" closedby="any">
+        <form id="modal-form">
+            <header>
+                <h3 id="modal-title">Create</h3>
+            </header>
+            <div id="modal-body"></div>
+            <footer>
+                <button type="button" class="outline small" onclick="this.closest('dialog').close()">Cancel</button>
+                <button type="button" data-variant="primary" id="modal-submit">Create</button>
+            </footer>
+        </form>
+    </dialog>
+
+    <!-- Detail Dialog -->
+    <dialog id="detail-dialog" closedby="any">
+        <form method="dialog">
+            <header>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);width:100%">
+                    <h3 id="detail-title" style="margin:0;flex:1">Detail</h3>
+                    <button type="button" id="detail-delete-btn" class="outline small" style="color:var(--danger);border-color:var(--danger);display:none">Delete</button>
+                </div>
+            </header>
+            <div id="detail-body"></div>
+            <footer>
+                <button class="outline" value="close">Close</button>
+            </footer>
+        </form>
+    </dialog>
+
+    <script src="https://unpkg.com/@knadh/oat/oat.min.js" defer></script>
+    <script src="/app.js" defer></script>
+</body>
+</html>

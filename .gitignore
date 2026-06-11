@@ -1,0 +1,26 @@
+// Zig cache
+zig-cache/
+zig-out/
+
+// Database
+~/.prozig/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+// OS
+.DS_Store
+*.swp
+*.swo
+*~
+
+// IDE
+.idea/
+.vscode/
+*.zig.out
+
+
+.opencode/
+.playwright-cli/
+.zig-cache/
