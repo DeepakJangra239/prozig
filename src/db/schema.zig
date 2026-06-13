@@ -1,5 +1,5 @@
 /// Latest schema version
-pub const LATEST_VERSION: u32 = 5;
+pub const LATEST_VERSION: u32 = 6;
 
 /// A single migration
 pub const Migration = struct {
@@ -34,6 +34,11 @@ pub const migrations: []const Migration = &.{
         .version = 5,
         .name = "comments_table",
         .sql = commentsTable,
+    },
+    .{
+        .version = 6,
+        .name = "projects_unique_root_path",
+        .sql = projectsUniqueRootPath,
     },
 };
 
@@ -286,4 +291,100 @@ const commentsTable =
     \\CREATE INDEX IF NOT EXISTS idx_comments_entity ON comments(entity_type, entity_id);
     \\CREATE INDEX IF NOT EXISTS idx_comments_project ON comments(project_id);
     \\CREATE INDEX IF NOT EXISTS idx_comments_author ON comments(author_id);
+;
+
+/// Migration v6: Deduplicate projects by root_path, then add UNIQUE constraint.
+/// Keeps the project with the lowest ID (oldest) for each root_path.
+/// Reassigns all child entities from duplicate projects to the kept project.
+const projectsUniqueRootPath =
+    \\-- Step 1: Reassign child entities from duplicate projects to the kept project (MIN id per root_path)
+    \\
+    \\UPDATE epics SET project_id = (
+    \\    SELECT MIN(p2.id) FROM projects p2
+    \\    WHERE p2.root_path = (SELECT p3.root_path FROM projects p3 WHERE p3.id = epics.project_id)
+    \\) WHERE project_id IN (
+    \\    SELECT p4.id FROM projects p4
+    \\    WHERE p4.id NOT IN (SELECT MIN(id) FROM projects GROUP BY root_path)
+    \\);
+    \\
+    \\UPDATE stories SET project_id = (
+    \\    SELECT MIN(p2.id) FROM projects p2
+    \\    WHERE p2.root_path = (SELECT p3.root_path FROM projects p3 WHERE p3.id = stories.project_id)
+    \\) WHERE project_id IN (
+    \\    SELECT p4.id FROM projects p4
+    \\    WHERE p4.id NOT IN (SELECT MIN(id) FROM projects GROUP BY root_path)
+    \\);
+    \\
+    \\UPDATE tasks SET project_id = (
+    \\    SELECT MIN(p2.id) FROM projects p2
+    \\    WHERE p2.root_path = (SELECT p3.root_path FROM projects p3 WHERE p3.id = tasks.project_id)
+    \\) WHERE project_id IN (
+    \\    SELECT p4.id FROM projects p4
+    \\    WHERE p4.id NOT IN (SELECT MIN(id) FROM projects GROUP BY root_path)
+    \\);
+    \\
+    \\UPDATE subtasks SET project_id = (
+    \\    SELECT MIN(p2.id) FROM projects p2
+    \\    WHERE p2.root_path = (SELECT p3.root_path FROM projects p3 WHERE p3.id = subtasks.project_id)
+    \\) WHERE project_id IN (
+    \\    SELECT p4.id FROM projects p4
+    \\    WHERE p4.id NOT IN (SELECT MIN(id) FROM projects GROUP BY root_path)
+    \\);
+    \\
+    \\UPDATE bugs SET project_id = (
+    \\    SELECT MIN(p2.id) FROM projects p2
+    \\    WHERE p2.root_path = (SELECT p3.root_path FROM projects p3 WHERE p3.id = bugs.project_id)
+    \\) WHERE project_id IN (
+    \\    SELECT p4.id FROM projects p4
+    \\    WHERE p4.id NOT IN (SELECT MIN(id) FROM projects GROUP BY root_path)
+    \\);
+    \\
+    \\UPDATE wiki_pages SET project_id = (
+    \\    SELECT MIN(p2.id) FROM projects p2
+    \\    WHERE p2.root_path = (SELECT p3.root_path FROM projects p3 WHERE p3.id = wiki_pages.project_id)
+    \\) WHERE project_id IN (
+    \\    SELECT p4.id FROM projects p4
+    \\    WHERE p4.id NOT IN (SELECT MIN(id) FROM projects GROUP BY root_path)
+    \\);
+    \\
+    \\UPDATE dependencies SET project_id = (
+    \\    SELECT MIN(p2.id) FROM projects p2
+    \\    WHERE p2.root_path = (SELECT p3.root_path FROM projects p3 WHERE p3.id = dependencies.project_id)
+    \\) WHERE project_id IN (
+    \\    SELECT p4.id FROM projects p4
+    \\    WHERE p4.id NOT IN (SELECT MIN(id) FROM projects GROUP BY root_path)
+    \\);
+    \\
+    \\-- Delete config/workflow/role data from duplicate projects (composite UNIQUE constraints prevent reassign)
+    \\-- The kept project already has its own config/workflow/role data
+    \\DELETE FROM role_permissions WHERE role_id IN (SELECT id FROM agent_roles WHERE project_id IN (SELECT p4.id FROM projects p4 WHERE p4.id NOT IN (SELECT MIN(id) FROM projects GROUP BY root_path)));
+    \\DELETE FROM agent_roles WHERE project_id IN (SELECT p4.id FROM projects p4 WHERE p4.id NOT IN (SELECT MIN(id) FROM projects GROUP BY root_path));
+    \\DELETE FROM workflow_transitions WHERE project_id IN (SELECT p4.id FROM projects p4 WHERE p4.id NOT IN (SELECT MIN(id) FROM projects GROUP BY root_path));
+    \\DELETE FROM workflow_states WHERE project_id IN (SELECT p4.id FROM projects p4 WHERE p4.id NOT IN (SELECT MIN(id) FROM projects GROUP BY root_path));
+    \\DELETE FROM project_configs WHERE project_id IN (SELECT p4.id FROM projects p4 WHERE p4.id NOT IN (SELECT MIN(id) FROM projects GROUP BY root_path));
+    \\
+    \\UPDATE comments SET project_id = (
+    \\    SELECT MIN(p2.id) FROM projects p2
+    \\    WHERE p2.root_path = (SELECT p3.root_path FROM projects p3 WHERE p3.id = comments.project_id)
+    \\) WHERE project_id IN (
+    \\    SELECT p4.id FROM projects p4
+    \\    WHERE p4.id NOT IN (SELECT MIN(id) FROM projects GROUP BY root_path)
+    \\);
+    \\
+    \\-- Step 2: Delete duplicate projects (those not the minimum ID per root_path)
+    \\DELETE FROM projects WHERE id NOT IN (SELECT MIN(id) FROM projects GROUP BY root_path);
+    \\
+    \\-- Step 3: Create new table with UNIQUE constraint on root_path
+    \\CREATE TABLE IF NOT EXISTS projects_new (
+    \\    id INTEGER PRIMARY KEY,
+    \\    name TEXT NOT NULL,
+    \\    root_path TEXT NOT NULL UNIQUE,
+    \\    description TEXT,
+    \\    metadata TEXT,
+    \\    created_at TEXT DEFAULT (datetime('now')),
+    \\    updated_at TEXT DEFAULT (datetime('now'))
+    \\);
+    \\INSERT INTO projects_new SELECT * FROM projects;
+    \\DROP TABLE projects;
+    \\ALTER TABLE projects_new RENAME TO projects;
 ;

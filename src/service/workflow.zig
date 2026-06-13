@@ -269,6 +269,33 @@ pub fn validateWorkflowTransition(conn: *Connection, project_id: i64, entity_typ
     return true; // Transition is valid per workflow
 }
 
+/// Return all valid target state names from the current state for a project's custom workflow.
+pub fn getValidWorkflowTransitions(conn: *Connection, project_id: i64, entity_type: []const u8, from_status: []const u8, allocator: std.mem.Allocator) !std.ArrayList([]const u8) {
+    var result = std.ArrayList([]const u8).empty;
+
+    const from_id = (try resolveStateId(conn, project_id, entity_type, from_status)) orelse return result;
+
+    const sql =
+        \\SELECT ws.name FROM workflow_transitions wt
+        \\JOIN workflow_states ws ON ws.id = wt.to_state_id
+        \\WHERE wt.project_id = ? AND wt.entity_type = ? AND wt.from_state_id = ?
+    ;
+    var stmt = try conn.prepare(sql);
+    defer stmt.finalize();
+    stmt.bindInt64(1, project_id);
+    stmt.bindText(2, entity_type);
+    stmt.bindInt64(3, from_id);
+
+    while (true) {
+        const row_result = stmt.step() catch break;
+        if (row_result != .row) break;
+        const name = stmt.columnText(0) orelse continue;
+        try result.append(allocator, try allocator.dupe(u8, name));
+    }
+
+    return result;
+}
+
 test "workflow validation with seeded project" {
     const testing = std.testing;
     var conn = try Connection.init(":memory:");

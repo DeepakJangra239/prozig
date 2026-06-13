@@ -3,6 +3,7 @@ const std = @import("std");
 const json = @import("../json.zig");
 const db = @import("../../db/connection.zig");
 const queries = @import("../../db/queries/subtasks.zig");
+const queries_tasks = @import("../../db/queries/tasks.zig");
 const queries_comments = @import("../../db/queries/comments.zig");
 const entities = @import("../../domain/entities.zig");
 const errorz = @import("../../error.zig");
@@ -25,6 +26,17 @@ pub fn handle(s: *Server, tool_name: []const u8, args: json.JsonValue) ![]const 
             error.MissingField => json.stringifyCatalogError(alloc, errorz.Errors.MISSING_FIELD.code, errorz.Errors.MISSING_FIELD.message, "title, description are required"),
             error.InvalidField => json.stringifyCatalogError(alloc, errorz.Errors.INVALID_FIELD.code, errorz.Errors.INVALID_FIELD.message, "project_id, task_id must be > 0"),
         };
+
+        // Verify task belongs to the specified project
+        const parent_task_check = queries_tasks.getById(s.conn, alloc, task_id) catch null;
+        if (parent_task_check) |ptc| {
+            defer entities.freeTask(alloc, ptc);
+            if (ptc.project_id != project_id) {
+                return json.stringifyCatalogError(alloc, errorz.Errors.INVALID_FIELD.code, errorz.Errors.INVALID_FIELD.message, "task_id does not belong to the specified project_id");
+            }
+        } else {
+            return json.stringifyCatalogError(alloc, errorz.Errors.NOT_FOUND.code, errorz.Errors.NOT_FOUND.message, "Task not found");
+        }
 
         // Create-time guard: parent task must not be in terminal state
         if (!try workflow.validateCreateParentState(s.conn, "task", task_id)) {
@@ -55,6 +67,12 @@ pub fn handle(s: *Server, tool_name: []const u8, args: json.JsonValue) ![]const 
             var buf = std.array_list.Managed(u8).init(alloc);
             defer buf.deinit();
             try buf.appendSlice(try std.fmt.allocPrint(alloc, "SubTask: {s} (id: {d}, status: {s})", .{ st.title, st.id, lifecycle.subTaskStatusToDb(st.status) }));
+            // Parent task context
+            const parent_task = queries_tasks.getById(s.conn, alloc, st.task_id) catch null;
+            if (parent_task) |pt| {
+                defer entities.freeTask(alloc, pt);
+                try buf.appendSlice(try std.fmt.allocPrint(alloc, "\nParent Task: {s} (id: {d})", .{ pt.title, pt.id }));
+            }
             if (try queries_comments.formatCommentsForResponse(alloc, s.conn, "subtask", id)) |comments_str| {
                 defer alloc.free(comments_str);
                 try buf.appendSlice(comments_str);
@@ -67,6 +85,18 @@ pub fn handle(s: *Server, tool_name: []const u8, args: json.JsonValue) ![]const 
     if (std.mem.eql(u8, tool_name, "subtask_list")) {
         const task_id_str = args.getRequiredString("task_id") catch return json.stringifyCatalogError(alloc, errorz.Errors.MISSING_FIELD.code, errorz.Errors.MISSING_FIELD.message, "task_id");
         const task_id = std.fmt.parseInt(i64, task_id_str, 10) catch return json.stringifyCatalogError(alloc, errorz.Errors.INVALID_FIELD.code, errorz.Errors.INVALID_FIELD.message, "task_id must be an integer");
+        // Optional project_id for cross-validation
+        const project_id_str = args.getOptionalString("project_id");
+        if (project_id_str) |pid_str| {
+            const pid = std.fmt.parseInt(i64, pid_str, 10) catch return json.stringifyCatalogError(alloc, errorz.Errors.INVALID_FIELD.code, errorz.Errors.INVALID_FIELD.message, "project_id must be an integer");
+            const task_check = queries_tasks.getById(s.conn, alloc, task_id) catch null;
+            if (task_check) |tc| {
+                defer entities.freeTask(alloc, tc);
+                if (tc.project_id != pid) {
+                    return json.stringifyCatalogError(alloc, errorz.Errors.INVALID_FIELD.code, errorz.Errors.INVALID_FIELD.message, "task_id does not belong to the specified project_id");
+                }
+            }
+        }
         var subtasks = try queries.listByTask(s.conn, alloc, task_id);
         defer {
             for (subtasks.items) |st| entities.freeSubTask(alloc, st);

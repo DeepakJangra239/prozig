@@ -43,6 +43,7 @@ fn handleSearch(s: *Server, args: json.JsonValue) ![]const u8 {
         .{ .table = "epics", .label = "EPIC" },
         .{ .table = "stories", .label = "STORY" },
         .{ .table = "tasks", .label = "TASK" },
+        .{ .table = "subtasks", .label = "SUBTASK" },
         .{ .table = "bugs", .label = "BUG" },
     };
 

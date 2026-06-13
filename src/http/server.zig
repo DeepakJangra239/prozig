@@ -223,7 +223,12 @@ fn handleApi(conn: *db.Connection, alloc: std.mem.Allocator, method: std.http.Me
     var it = std.mem.splitScalar(u8, path, '/');
     _ = it.next();
     _ = it.next();
-    const resource = it.next() orelse return error.BadRequest;
+    var resource = it.next() orelse return error.BadRequest;
+    // Strip query string from resource name (e.g., "dashboard?project_id=1" -> "dashboard")
+    const qmark = std.mem.indexOfScalar(u8, resource, '?');
+    if (qmark) |q| {
+        resource = resource[0..q];
+    }
 
     if (std.mem.eql(u8, resource, "projects")) {
         const project_id = it.next();
@@ -251,7 +256,7 @@ fn handleApi(conn: *db.Connection, alloc: std.mem.Allocator, method: std.http.Me
     if (std.mem.eql(u8, resource, "wiki")) return handleWikiApi(conn, alloc, method, &it, body);
     if (std.mem.eql(u8, resource, "agents")) return handleAgentsApi(conn, alloc, method, &it, body);
     if (std.mem.eql(u8, resource, "comments")) return handleCommentsApi(conn, alloc, method, &it, body);
-    if (std.mem.eql(u8, resource, "dashboard")) return handleDashboardApi(conn, alloc, method, body);
+    if (std.mem.eql(u8, resource, "dashboard")) return handleDashboardApi(conn, alloc, method, path, body);
     if (std.mem.eql(u8, resource, "health")) return alloc.dupe(u8, "{\"status\":\"ok\"}");
     return error.NotFound;
 }
@@ -1144,13 +1149,40 @@ fn freeAgent(alloc: std.mem.Allocator, a: entities.AgentProfile) void {
     alloc.free(a.created_at); alloc.free(a.updated_at);
 }
 
-fn handleDashboardApi(conn: *db.Connection, alloc: std.mem.Allocator, method: std.http.Method, body: ?[]u8) ![]u8 {
+fn handleDashboardApi(conn: *db.Connection, alloc: std.mem.Allocator, method: std.http.Method, path: []const u8, body: ?[]u8) ![]u8 {
     _ = body;
     if (method != .GET) return errJson(alloc, "method_not_allowed");
     var service = svc.init(conn);
+
+    // Parse optional project_id from query string: /api/dashboard?project_id=1
+    const project_id = parseQueryParam(alloc, path, "project_id") catch null;
+    if (project_id) |pid_str| {
+        defer alloc.free(pid_str);
+        const pid = std.fmt.parseInt(i64, pid_str, 10) catch return errJson(alloc, "invalid_project_id");
+        const counts = dashboard_svc.getProjectDashboardCounts(&service, alloc, pid) catch |err| return errJson(alloc, @errorName(err));
+        return std.fmt.allocPrint(alloc, \\{{"projects":{d},"epics":{d},"stories":{d},"tasks":{d},"bugs":{d}}}
+        , .{ counts.projects, counts.epics, counts.stories, counts.tasks, counts.bugs });
+    }
+
     const counts = dashboard_svc.getDashboardCounts(&service, alloc) catch |err| return errJson(alloc, @errorName(err));
     return std.fmt.allocPrint(alloc, \\{{"projects":{d},"epics":{d},"stories":{d},"tasks":{d},"bugs":{d}}}
     , .{ counts.projects, counts.epics, counts.stories, counts.tasks, counts.bugs });
+}
+
+/// Parse a query parameter from a URL path like "/api/dashboard?project_id=1"
+fn parseQueryParam(alloc: std.mem.Allocator, path: []const u8, key: []const u8) !?[]u8 {
+    const qmark = std.mem.indexOfScalar(u8, path, '?') orelse return null;
+    const query = path[qmark + 1 ..];
+    var it = std.mem.splitScalar(u8, query, '&');
+    while (it.next()) |param| {
+        const eq = std.mem.indexOfScalar(u8, param, '=') orelse continue;
+        const pkey = param[0..eq];
+        const pval = param[eq + 1 ..];
+        if (std.mem.eql(u8, pkey, key)) {
+            return try alloc.dupe(u8, pval);
+        }
+    }
+    return null;
 }
 
 // ─── Comments API ───

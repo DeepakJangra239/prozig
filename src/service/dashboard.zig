@@ -77,3 +77,58 @@ pub fn getDashboardCounts(srv: *Service, allocator: std.mem.Allocator) !Dashboar
         .bugs = bugs_count,
     };
 }
+
+/// Compute dashboard counts for a specific project.
+pub fn getProjectDashboardCounts(srv: *Service, allocator: std.mem.Allocator, project_id: i64) !DashboardCounts {
+    const conn = srv.conn;
+
+    var epics_count: usize = 0;
+    var stories_count: usize = 0;
+    var tasks_count: usize = 0;
+    var bugs_count: usize = 0;
+
+    // Count epics for this project
+    var epics = queries_epic.listByProject(conn, allocator, project_id) catch {
+        return DashboardCounts{ .projects = 1, .epics = 0, .stories = 0, .tasks = 0, .bugs = 0 };
+    };
+    epics_count = epics.items.len;
+
+    for (epics.items) |e| {
+        var stories = queries_story.listByEpic(conn, allocator, e.id) catch {
+            entities.freeEpic(allocator, e);
+            continue;
+        };
+        stories_count += stories.items.len;
+
+        for (stories.items) |s| {
+            var tasks = queries_task.listByStory(conn, allocator, s.id) catch {
+                entities.freeStory(allocator, s);
+                continue;
+            };
+            tasks_count += tasks.items.len;
+
+            for (tasks.items) |t| entities.freeTask(allocator, t);
+            tasks.deinit(allocator);
+            entities.freeStory(allocator, s);
+        }
+        stories.deinit(allocator);
+        entities.freeEpic(allocator, e);
+    }
+    epics.deinit(allocator);
+
+    // Count bugs for this project
+    var bugs = queries_bug.listByProject(conn, allocator, project_id) catch {
+        return DashboardCounts{ .projects = 1, .epics = epics_count, .stories = stories_count, .tasks = tasks_count, .bugs = 0 };
+    };
+    bugs_count = bugs.items.len;
+    for (bugs.items) |b| entities.freeBug(allocator, b);
+    bugs.deinit(allocator);
+
+    return DashboardCounts{
+        .projects = 1,
+        .epics = epics_count,
+        .stories = stories_count,
+        .tasks = tasks_count,
+        .bugs = bugs_count,
+    };
+}

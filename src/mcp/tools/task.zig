@@ -3,6 +3,7 @@ const std = @import("std");
 const json = @import("../json.zig");
 const db = @import("../../db/connection.zig");
 const queries = @import("../../db/queries/tasks.zig");
+const queries_stories = @import("../../db/queries/stories.zig");
 const queries_comments = @import("../../db/queries/comments.zig");
 const entities = @import("../../domain/entities.zig");
 const errorz = @import("../../error.zig");
@@ -55,6 +56,12 @@ pub fn handle(s: *Server, tool_name: []const u8, args: json.JsonValue) ![]const 
             var buf = std.array_list.Managed(u8).init(alloc);
             defer buf.deinit();
             try buf.appendSlice(try std.fmt.allocPrint(alloc, "Task: {s} (id: {d}, status: {s})", .{ t.title, t.id, lifecycle.taskStatusToDb(t.status) }));
+            // Parent story context
+            const parent_story = queries_stories.getById(s.conn, alloc, t.story_id) catch null;
+            if (parent_story) |ps| {
+                defer entities.freeStory(alloc, ps);
+                try buf.appendSlice(try std.fmt.allocPrint(alloc, "\nParent Story: {s} (id: {d})", .{ ps.title, ps.id }));
+            }
             if (try queries_comments.formatCommentsForResponse(alloc, s.conn, "task", id)) |comments_str| {
                 defer alloc.free(comments_str);
                 try buf.appendSlice(comments_str);

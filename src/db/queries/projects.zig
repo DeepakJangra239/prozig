@@ -61,6 +61,35 @@ pub fn getById(conn: *db.Connection, allocator: std.mem.Allocator, project_id: i
     };
 }
 
+/// Get a project by root_path (for duplicate detection)
+pub fn getByRootPath(conn: *db.Connection, allocator: std.mem.Allocator, root_path: []const u8) !?entities.Project {
+    const sql = "SELECT id, name, root_path, description, metadata, created_at, updated_at FROM projects WHERE root_path = ?";
+    var stmt = try conn.prepare(sql);
+    defer stmt.finalize();
+
+    stmt.bindText(1, root_path);
+    const result = try stmt.step();
+    if (result != .row) return null;
+    const id_opt = stmt.columnInt64Safe(0);
+    if (id_opt == null) return null;
+    const name = stmt.columnText(1) orelse return null;
+    const rp = stmt.columnText(2) orelse return null;
+    const description = stmt.columnText(3);
+    const metadata = stmt.columnText(4);
+    const created_at = stmt.columnText(5) orelse return null;
+    const updated_at = stmt.columnText(6) orelse return null;
+
+    return entities.Project{
+        .id = id_opt.?,
+        .name = try allocator.dupe(u8, name),
+        .root_path = try allocator.dupe(u8, rp),
+        .description = if (description) |d| try allocator.dupe(u8, d) else null,
+        .metadata = if (metadata) |m| try allocator.dupe(u8, m) else null,
+        .created_at = try allocator.dupe(u8, created_at),
+        .updated_at = try allocator.dupe(u8, updated_at),
+    };
+}
+
 /// List all projects
 pub fn listAll(conn: *db.Connection, allocator: std.mem.Allocator) !std.ArrayList(entities.Project) {
     var results = std.ArrayList(entities.Project).empty;

@@ -3,6 +3,7 @@ const std = @import("std");
 const json = @import("../json.zig");
 const db = @import("../../db/connection.zig");
 const queries = @import("../../db/queries/stories.zig");
+const queries_epics = @import("../../db/queries/epics.zig");
 const queries_comments = @import("../../db/queries/comments.zig");
 const entities = @import("../../domain/entities.zig");
 const errorz = @import("../../error.zig");
@@ -58,6 +59,12 @@ pub fn handle(s: *Server, tool_name: []const u8, args: json.JsonValue) ![]const 
             var buf = std.array_list.Managed(u8).init(alloc);
             defer buf.deinit();
             try buf.appendSlice(try std.fmt.allocPrint(alloc, "Story: {s} (id: {d}, status: {s})", .{ s2.title, s2.id, lifecycle.storyStatusToDb(s2.status) }));
+            // Parent epic context
+            const parent_epic = queries_epics.getById(s.conn, alloc, s2.epic_id) catch null;
+            if (parent_epic) |pe| {
+                defer entities.freeEpic(alloc, pe);
+                try buf.appendSlice(try std.fmt.allocPrint(alloc, "\nParent Epic: {s} (id: {d})", .{ pe.title, pe.id }));
+            }
             if (try queries_comments.formatCommentsForResponse(alloc, s.conn, "story", id)) |comments_str| {
                 defer alloc.free(comments_str);
                 try buf.appendSlice(comments_str);

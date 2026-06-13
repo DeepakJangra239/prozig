@@ -196,10 +196,10 @@
   border-radius: var(--radius-medium);
   padding: var(--space-4);
   min-height: 120px;
-  min-width: 260px;
-  max-width: 320px;
+  min-width: 280px;
+  max-width: 340px;
   max-height: calc(100vh - 180px);
-  flex: 1 1 260px;
+  flex: 1 1 280px;
   display: flex;
   flex-direction: column;
   overflow-y: auto;
@@ -279,13 +279,18 @@
   height: 14px;
 }
 
-/* Card title - wraps to multiple lines */
+/* Card title - truncates to 3 lines with ellipsis */
 .item-card .item-title {
   font-size: var(--text-6);
   color: var(--foreground);
   line-height: 1.4;
   word-break: break-word;
   overflow-wrap: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Card footer: agent badge + status */
@@ -539,6 +544,44 @@
   border-radius: 4px;
   font-size: var(--text-8);
   font-family: var(--font-mono, monospace);
+}
+
+/* Markdown rendered content in detail view */
+.detail-md {
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-medium);
+  padding: var(--space-3);
+  font-size: var(--text-7);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.detail-md pre {
+  background: var(--muted);
+  padding: var(--space-3);
+  border-radius: var(--radius-small);
+  overflow-x: auto;
+  margin: var(--space-2) 0;
+}
+.detail-md code {
+  background: var(--muted);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: var(--text-8);
+  font-family: var(--font-mono, monospace);
+}
+.detail-md h1, .detail-md h2, .detail-md h3 {
+  margin: var(--space-2) 0 var(--space-1) 0;
+  color: var(--foreground);
+}
+.detail-md ul {
+  margin: var(--space-1) 0;
+  padding-left: var(--space-4);
+}
+.detail-md a {
+  color: var(--primary);
+  text-decoration: underline;
 }
 
 .detail-transitions {

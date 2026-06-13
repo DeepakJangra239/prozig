@@ -388,6 +388,69 @@ pub fn getNextStatus(entity_type: EntityType, current: []const u8) ?[]const u8 {
     return null;
 }
 
+/// Return all valid target statuses from a given current status.
+/// Returns a static slice of valid status strings.
+pub fn getValidTransitions(entity_type: EntityType, current: []const u8) []const []const u8 {
+    // Collect valid transitions into a static array (max 7 for story)
+    var valid: [7][]const u8 = undefined;
+    var count: usize = 0;
+
+    switch (entity_type) {
+        .epic => {
+            const all = [_][]const u8{ "Backlog", "Planned", "In Progress", "In Review", "Done", "Cancelled" };
+            for (all) |status| {
+                if (std.mem.eql(u8, current, status)) continue;
+                if (isValidEpicTransition(current, status) and count < valid.len) {
+                    valid[count] = status;
+                    count += 1;
+                }
+            }
+        },
+        .story => {
+            const all = [_][]const u8{ "Backlog", "Planned", "In Progress", "In Review", "UAT", "Done", "Cancelled" };
+            for (all) |status| {
+                if (std.mem.eql(u8, current, status)) continue;
+                if (isValidStoryTransition(current, status) and count < valid.len) {
+                    valid[count] = status;
+                    count += 1;
+                }
+            }
+        },
+        .task => {
+            const all = [_][]const u8{ "Todo", "In Progress", "In Review", "In QA", "Done", "Cancelled" };
+            for (all) |status| {
+                if (std.mem.eql(u8, current, status)) continue;
+                if (isValidTaskTransition(current, status) and count < valid.len) {
+                    valid[count] = status;
+                    count += 1;
+                }
+            }
+        },
+        .subtask => {
+            const all = [_][]const u8{ "Todo", "In Progress", "UT", "Done", "Cancelled" };
+            for (all) |status| {
+                if (std.mem.eql(u8, current, status)) continue;
+                if (isValidSubTaskTransition(current, status) and count < valid.len) {
+                    valid[count] = status;
+                    count += 1;
+                }
+            }
+        },
+        .bug => {
+            const all = [_][]const u8{ "New", "In Progress", "In Review", "Resolved", "Closed", "Cancelled" };
+            for (all) |status| {
+                if (std.mem.eql(u8, current, status)) continue;
+                if (isValidBugTransition(current, status) and count < valid.len) {
+                    valid[count] = status;
+                    count += 1;
+                }
+            }
+        },
+    }
+
+    return valid[0..count];
+}
+
 /// Check if a status is terminal (Done or Cancelled)
 pub fn isTerminal(status: []const u8) bool {
     return std.mem.eql(u8, status, "Done") or std.mem.eql(u8, status, "Cancelled");

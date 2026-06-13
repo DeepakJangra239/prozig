@@ -12,6 +12,14 @@ const SEVERITY_LABELS = { critical: 'Critical', high: 'High', medium: 'Medium', 
 const SEVERITY_COLORS = { critical: '#ef4444', high: '#f97316', medium: '#eab308', low: '#6b7280' };
 let modalCallback = null;
 
+// Restore persisted state from localStorage
+try {
+  const savedProject = localStorage.getItem('prozig_project');
+  if (savedProject) currentProject = Number(savedProject);
+  const savedView = localStorage.getItem('prozig_view');
+  if (savedView) currentView = savedView;
+} catch {}
+
 function formatDate(iso) {
   if (!iso) return '';
   try { return new Date(iso).toLocaleString(); } catch { return iso; }
@@ -117,6 +125,7 @@ function initNavigation() {
 
 function switchView(view) {
   currentView = view;
+  try { localStorage.setItem('prozig_view', view); } catch {}
   // Update sidebar nav active state
   $$('#main-nav a').forEach(a => {
     a.toggleAttribute('aria-current', a.dataset.view === view);
@@ -137,8 +146,9 @@ function switchView(view) {
 // ─── Dashboard ───
 async function loadDashboard() {
   try {
+    const statsUrl = currentProject ? `/dashboard?project_id=${currentProject}` : '/dashboard';
     const [stats, projList] = await Promise.all([
-      apiGet('/dashboard').catch(() => ({ projects: 0, epics: 0, stories: 0, tasks: 0 })),
+      apiGet(statsUrl).catch(() => ({ projects: 0, epics: 0, stories: 0, tasks: 0 })),
       apiGet('/projects').catch(() => []),
     ]);
     projects = projList;
@@ -187,7 +197,9 @@ function populateProjectSelect() {
     projects.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
   sel.onchange = () => {
     currentProject = sel.value ? Number(sel.value) : null;
+    try { localStorage.setItem('prozig_project', String(currentProject || '')); } catch {}
     updateSidebarContext();
+    if (currentView === 'dashboard') loadDashboard();
     if (currentView === 'board') loadBoard();
     if (currentView === 'wiki') loadWiki();
     if (currentView === 'roles') loadRoles();
@@ -199,6 +211,7 @@ function populateProjectSelect() {
 
 function selectProject(id) {
   currentProject = id;
+  try { localStorage.setItem('prozig_project', String(id)); } catch {}
   const sel = $('#project-select');
   if (sel) sel.value = id;
   updateSidebarContext();
@@ -749,7 +762,7 @@ async function showDetail(type, id) {
     html += `<div class="detail-row"><span class="label">ID</span><span class="value">${entity.id}</span></div>`;
     html += `<div class="detail-row"><span class="label">Title</span><span class="value">${esc(entity.title||'')}</span></div>`;
     html += `<div class="detail-row"><span class="label">Status</span><span class="value">${statusBadge(entity.status||'')}</span></div>`;
-    if (entity.description) html += `<div class="detail-row"><span class="label">Description</span><span class="value">${esc(entity.description)}</span></div>`;
+    if (entity.description) html += `<div class="detail-row"><span class="label">Description</span><div class="detail-md">${renderMarkdown(entity.description)}</div></div>`;
     if (entity.acceptance_criteria) html += `<div class="detail-row"><span class="label">Acceptance Criteria</span><div class="detail-ac">${renderMarkdown(entity.acceptance_criteria)}</div></div>`;
     if (entity.capabilities) html += `<div class="detail-row"><span class="label">Capabilities</span><span class="value">${esc(entity.capabilities)}</span></div>`;
     if (entity.role_name) html += `<div class="detail-row"><span class="label">Role</span><span class="value"><span class="tag" style="background:var(--primary-ghost);color:var(--primary)">${esc(entity.role_name)}</span></span></div>`;
@@ -827,7 +840,14 @@ async function renderChildren(parentType, parentId) {
       h += `<button class="outline small" style="margin-top:var(--space-2)" onclick="showNewTaskForm(${parentId})">+ Add Task</button></div>`;
       return h;
     }
-    if (parentType === 'task') return '<div class="children-section"><h4>Subtasks</h4><button class="outline small" onclick="showNewSubtaskForm('+parentId+')">+ Add Subtask</button></div>';
+    if (parentType === 'task') {
+      const subtasks = await apiGet(`/subtasks?task_id=${parentId}`).catch(() => []);
+      if (!subtasks.length) return '<div class="children-section"><h4>Subtasks</h4><p style="color:var(--muted-foreground);font-size:var(--text-8)">No subtasks yet.</p><button class="outline small" onclick="showNewSubtaskForm('+parentId+')">+ Add Subtask</button></div>';
+      let h = '<div class="children-section"><h4>Subtasks</h4>';
+      for (const st of subtasks) h += `<div class="child-item" onclick="showDetail('subtask',${st.id})"><span class="child-title">${esc(st.title)}</span>${statusBadge(st.status)}</div>`;
+      h += `<button class="outline small" style="margin-top:var(--space-2)" onclick="showNewSubtaskForm(${parentId})">+ Add Subtask</button></div>`;
+      return h;
+    }
     return '';
   } catch (e) { return ''; }
 }
@@ -846,7 +866,7 @@ function renderCommentsSection(entityType, entityId, comments) {
       h += `<span class="comment-author">${authorBadge} ${esc(c.author_name)}</span>`;
       h += `<span class="comment-time">${formatDate(c.created_at)}</span>`;
       h += `</div>`;
-      h += `<div class="comment-content">${renderCommentMarkdown(c.content)}</div>`;
+      h += `<div class="comment-content">${renderMarkdown(c.content)}</div>`;
       h += `<div class="comment-actions">`;
       h += `<button class="outline small" onclick="editComment(${c.id}, '${entityType}', ${entityId})">Edit</button>`;
       h += `<button class="outline small" style="color:var(--danger);border-color:var(--danger)" onclick="deleteComment(${c.id}, '${entityType}', ${entityId})">Delete</button>`;
@@ -860,22 +880,6 @@ function renderCommentsSection(entityType, entityId, comments) {
   h += `<button class="primary small" onclick="addComment('${entityType}', ${entityId})">Add Comment</button>`;
   h += `</div></div></div>`;
   return h;
-}
-
-/// Simple markdown renderer for comments: converts **bold**, *italic*, `code`, @mentions, and newlines
-function renderCommentMarkdown(text) {
-  let html = esc(text);
-  // Inline code (backticks)
-  html = html.replace(/`([^`]+)`/g, '<code style="background:var(--muted);padding:2px 6px;border-radius:4px;font-size:var(--text-8);font-family:var(--font-mono)">$1</code>');
-  // Bold
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  // Italic
-  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  // @-mentions: highlight @AgentName patterns
-  html = html.replace(/@(\w+)/g, '<span class="mention" style="color:var(--primary);font-weight:600">@$1</span>');
-  // Newlines to <br>
-  html = html.replace(/\n/g, '<br>');
-  return html;
 }
 
 async function addComment(entityType, entityId) {
@@ -1244,6 +1248,11 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   loadDashboard();
+
+  // Restore persisted view after dashboard loads
+  if (currentView && currentView !== 'dashboard') {
+    setTimeout(() => switchView(currentView), 100);
+  }
 
   // Initialize drag-drop and bulk selection
   initDragDrop();

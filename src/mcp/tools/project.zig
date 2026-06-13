@@ -16,6 +16,22 @@ pub fn handle(s: *Server, tool_name: []const u8, args: json.JsonValue) ![]const 
         const root_path = args.getRequiredString("root_path") catch return json.stringifyCatalogError(alloc, errorz.Errors.MISSING_FIELD.code, errorz.Errors.MISSING_FIELD.message, "root_path");
         const description = args.getOptionalString("description");
 
+        // Check if a project already exists for this root_path
+        const existing = queries.getByRootPath(s.conn, alloc, root_path) catch |err| {
+            return json.stringifyCatalogError(alloc, errorz.Errors.DB_ERROR.code, errorz.Errors.DB_ERROR.message, @errorName(err));
+        };
+        if (existing) |ep| {
+            defer {
+                alloc.free(ep.name);
+                alloc.free(ep.root_path);
+                if (ep.description) |d| alloc.free(d);
+                if (ep.metadata) |m| alloc.free(m);
+                alloc.free(ep.created_at);
+                alloc.free(ep.updated_at);
+            }
+            return json.stringifyTextResponse(alloc, std.fmt.allocPrint(alloc, "Project already exists for this directory: '{s}' (id: {d}). Use this existing project instead of creating a new one.", .{ ep.name, ep.id }) catch "exists");
+        }
+
         const project = try queries.insert(s.conn, alloc, name, root_path, description);
         defer {
             s.allocator.free(project.name);
