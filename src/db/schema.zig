@@ -1,5 +1,5 @@
 /// Latest schema version
-pub const LATEST_VERSION: u32 = 6;
+pub const LATEST_VERSION: u32 = 7;
 
 /// A single migration
 pub const Migration = struct {
@@ -39,6 +39,11 @@ pub const migrations: []const Migration = &.{
         .version = 6,
         .name = "projects_unique_root_path",
         .sql = projectsUniqueRootPath,
+    },
+    .{
+        .version = 7,
+        .name = "agent_memory_tables",
+        .sql = agentMemoryTables,
     },
 };
 
@@ -387,4 +392,79 @@ const projectsUniqueRootPath =
     \\INSERT INTO projects_new SELECT * FROM projects;
     \\DROP TABLE projects;
     \\ALTER TABLE projects_new RENAME TO projects;
+;
+
+/// Migration v7: Agent memory tables, FTS5, triggers, and indexes.
+const agentMemoryTables =
+    \\CREATE TABLE IF NOT EXISTS agent_memory (
+    \\    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    \\    project_id INTEGER NOT NULL,
+    \\    role_name TEXT,
+    \\    scope TEXT NOT NULL,
+    \\    entity_id INTEGER,
+    \\    category TEXT NOT NULL,
+    \\    title TEXT NOT NULL,
+    \\    content TEXT NOT NULL,
+    \\    summary TEXT,
+    \\    tags TEXT,
+    \\    importance INTEGER DEFAULT 3,
+    \\    access_count INTEGER DEFAULT 0,
+    \\    last_accessed_at TEXT,
+    \\    created_at TEXT DEFAULT (datetime('now')),
+    \\    updated_at TEXT DEFAULT (datetime('now')),
+    \\    FOREIGN KEY (project_id) REFERENCES projects(id),
+    \\    UNIQUE(project_id, role_name, scope, entity_id, title)
+    \\);
+    \\
+    \\CREATE TABLE IF NOT EXISTS project_summaries (
+    \\    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    \\    project_id INTEGER NOT NULL,
+    \\    narrative TEXT,
+    \\    bullets TEXT,
+    \\    version INTEGER DEFAULT 1,
+    \\    updated_at TEXT DEFAULT (datetime('now')),
+    \\    UNIQUE(project_id),
+    \\    FOREIGN KEY (project_id) REFERENCES projects(id)
+    \\);
+    \\
+    \\CREATE VIRTUAL TABLE IF NOT EXISTS agent_memory_fts USING fts5(
+    \\    title, content, tags, summary,
+    \\    content='agent_memory',
+    \\    content_rowid='rowid'
+    \\);
+    \\
+    \\CREATE TRIGGER IF NOT EXISTS agent_memory_fts_insert AFTER INSERT ON agent_memory BEGIN
+    \\    INSERT INTO agent_memory_fts(rowid, title, content, tags, summary)
+    \\    VALUES (new.id, new.title, new.content, new.tags, new.summary);
+    \\END;
+    \\
+    \\CREATE TRIGGER IF NOT EXISTS agent_memory_fts_delete AFTER DELETE ON agent_memory BEGIN
+    \\    INSERT INTO agent_memory_fts(agent_memory_fts, rowid, title, content, tags, summary)
+    \\    VALUES ('delete', old.id, old.title, old.content, old.tags, old.summary);
+    \\END;
+    \\
+    \\CREATE TRIGGER IF NOT EXISTS agent_memory_fts_update AFTER UPDATE ON agent_memory BEGIN
+    \\    INSERT INTO agent_memory_fts(agent_memory_fts, rowid, title, content, tags, summary)
+    \\    VALUES ('delete', old.id, old.title, old.content, old.tags, old.summary);
+    \\    INSERT INTO agent_memory_fts(rowid, title, content, tags, summary)
+    \\    VALUES (new.id, new.title, new.content, new.tags, new.summary);
+    \\END;
+    \\
+    \\CREATE TABLE IF NOT EXISTS memory_usage (
+    \\    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    \\    project_id INTEGER NOT NULL,
+    \\    role_name TEXT NOT NULL,
+    \\    total_chars INTEGER DEFAULT 0,
+    \\    entry_count INTEGER DEFAULT 0,
+    \\    last_consolidated_at TEXT,
+    \\    UNIQUE(project_id, role_name),
+    \\    FOREIGN KEY (project_id) REFERENCES projects(id)
+    \\);
+    \\
+    \\CREATE INDEX IF NOT EXISTS idx_memory_scope_project ON agent_memory(project_id, scope);
+    \\CREATE INDEX IF NOT EXISTS idx_memory_role_project ON agent_memory(project_id, role_name);
+    \\CREATE INDEX IF NOT EXISTS idx_memory_entity ON agent_memory(scope, entity_id);
+    \\CREATE INDEX IF NOT EXISTS idx_memory_category ON agent_memory(category);
+    \\CREATE INDEX IF NOT EXISTS idx_memory_importance ON agent_memory(importance DESC);
+    \\CREATE INDEX IF NOT EXISTS idx_memory_last_accessed ON agent_memory(last_accessed_at DESC);
 ;

@@ -26,6 +26,7 @@
                 <li><a data-view="roles">Roles</a></li>
                 <li><a data-view="workflow">Workflow</a></li>
                 <li><a data-view="wiki">Wiki</a></li>
+                <li><a data-view="memories">Memories</a></li>
                 <li><a data-view="agents">Agents</a></li>
             </ul>
         </nav>
@@ -127,6 +128,36 @@
                 <button id="btn-new-agent" data-variant="primary" class="small">+ Agent</button>
             </div>
             <div id="agent-list" class="card-grid"></div>
+        </div>
+
+        <!-- Memories View -->
+        <div id="memories" class="view">
+            <div class="view-header">
+                <h3>Project Memory</h3>
+                <div class="view-actions">
+                    <select id="memory-scope-filter" class="small" aria-label="Filter by scope" style="max-width:8rem">
+                        <option value="">All Scopes</option>
+                        <option value="project">Project</option>
+                        <option value="epic">Epic</option>
+                        <option value="story">Story</option>
+                        <option value="task">Task</option>
+                        <option value="bug">Bug</option>
+                        <option value="wiki">Wiki</option>
+                    </select>
+                    <select id="memory-category-filter" class="small" aria-label="Filter by category" style="max-width:8rem">
+                        <option value="">All Categories</option>
+                        <option value="decision">Decision</option>
+                        <option value="blocker">Blocker</option>
+                        <option value="pattern">Pattern</option>
+                        <option value="outcome">Outcome</option>
+                        <option value="note">Note</option>
+                        <option value="learning">Learning</option>
+                    </select>
+                    <button id="btn-new-memory" data-variant="primary" class="small">+ Memory</button>
+                </div>
+            </div>
+            <div id="memory-usage-bar" class="memory-usage-bar"></div>
+            <div id="memory-list" class="card-grid"></div>
         </div>
     </main>
 

@@ -4,6 +4,7 @@ const json = @import("../json.zig");
 const db = @import("../../db/connection.zig");
 const queries = @import("../../db/queries/epics.zig");
 const queries_comments = @import("../../db/queries/comments.zig");
+const queries_memory = @import("../../db/queries/memory.zig");
 const entities = @import("../../domain/entities.zig");
 const errorz = @import("../../error.zig");
 const lifecycle = @import("../../domain/lifecycle.zig");
@@ -56,6 +57,15 @@ pub fn handle(s: *Server, tool_name: []const u8, args: json.JsonValue) ![]const 
             if (try queries_comments.formatCommentsForResponse(alloc, s.conn, "epic", id)) |comments_str| {
                 defer alloc.free(comments_str);
                 try buf.appendSlice(comments_str);
+            }
+            // Memory injection: project summary + related memories
+            if (try queries_memory.formatProjectSummaryForResponse(alloc, s.conn, e.project_id)) |summary_str| {
+                defer alloc.free(summary_str);
+                try buf.appendSlice(summary_str);
+            }
+            if (try queries_memory.formatMemoriesForResponse(alloc, s.conn, "epic", e.id)) |mem_str| {
+                defer alloc.free(mem_str);
+                try buf.appendSlice(mem_str);
             }
             return json.stringifyTextResponse(alloc, buf.items);
         }

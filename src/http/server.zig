@@ -12,6 +12,7 @@ const queries_bug = @import("../db/queries/bug.zig");
 const queries_wiki = @import("../db/queries/wiki.zig");
 const queries_agents = @import("../db/queries/agents.zig");
 const queries_comments = @import("../db/queries/comments.zig");
+const queries_memory = @import("../db/queries/memory.zig");
 const entities = @import("../domain/entities.zig");
 const lifecycle = @import("../domain/lifecycle.zig");
 const validation = @import("../domain/validation.zig");
@@ -257,6 +258,7 @@ fn handleApi(conn: *db.Connection, alloc: std.mem.Allocator, method: std.http.Me
     if (std.mem.eql(u8, resource, "agents")) return handleAgentsApi(conn, alloc, method, &it, body);
     if (std.mem.eql(u8, resource, "comments")) return handleCommentsApi(conn, alloc, method, &it, body);
     if (std.mem.eql(u8, resource, "dashboard")) return handleDashboardApi(conn, alloc, method, path, body);
+    if (std.mem.eql(u8, resource, "memories")) return handleMemoriesApi(conn, alloc, method, &it, body);
     if (std.mem.eql(u8, resource, "health")) return alloc.dupe(u8, "{\"status\":\"ok\"}");
     return error.NotFound;
 }
@@ -368,8 +370,8 @@ fn handleRolesByProject(conn: *db.Connection, alloc: std.mem.Allocator, method: 
             }
             return alloc.dupe(u8, "{\"success\":true}");
         }
-        return errJson(alloc, "method_not_allowed");
-    }
+    return errJson(alloc, "method_not_allowed");
+}
 
     // GET list / POST create / DELETE / PUT single role
     if (role_id == null and method == .GET) {
@@ -1287,4 +1289,167 @@ fn getEntityProjectIdFromConn(conn: *db.Connection, entity_type: []const u8, ent
     stmt.bindInt64(1, entity_id);
     if (try stmt.step() == .row) return stmt.columnInt64(0);
     return null;
+}
+
+// ─── Memory API ───
+
+const MemoryCreatePayload = struct {
+    project_id: i64,
+    role_name: ?[]const u8 = null,
+    scope: []const u8,
+    entity_id: ?i64 = null,
+    category: []const u8,
+    title: []const u8,
+    content: []const u8,
+    summary: ?[]const u8 = null,
+    tags: ?[]const u8 = null,
+    importance: ?[]const u8 = null,
+};
+
+const MemoryUpdatePayload = struct {
+    title: ?[]const u8 = null,
+    content: ?[]const u8 = null,
+    summary: ?[]const u8 = null,
+    tags: ?[]const u8 = null,
+    importance: ?[]const u8 = null,
+};
+
+fn handleMemoriesApi(conn: *db.Connection, alloc: std.mem.Allocator, method: std.http.Method, it: *std.mem.SplitIterator(u8, .scalar), body: ?[]u8) ![]u8 {
+    const id_str = it.next();
+    const id = if (id_str) |s| parseId(s) catch null else null;
+
+    // GET /api/memories — list all memories for a project (query param: project_id)
+    if (method == .GET and id == null) {
+        var result = std.array_list.Managed(u8).init(alloc);
+        try result.appendSlice("[");
+        var first = true;
+        var stmt = try conn.prepare("SELECT id, project_id, role_name, scope, entity_id, category, title, importance, created_at FROM agent_memory ORDER BY importance DESC, created_at DESC");
+        defer stmt.finalize();
+        while (true) {
+            const row = stmt.step() catch break;
+            if (row != .row) break;
+            if (!first) try result.append(',');
+            first = false;
+            const mid = stmt.columnInt64(0);
+            const project_id = stmt.columnInt64(1);
+            const role_name = stmt.columnText(2);
+            const scope = stmt.columnText(3) orelse "";
+            const entity_id = stmt.columnInt64Safe(4);
+            const category = stmt.columnText(5) orelse "";
+            const title = stmt.columnText(6) orelse "";
+            const importance = stmt.columnInt64(7);
+            const created_at = stmt.columnText(8) orelse "";
+            const esc_title = try jsonEscape(alloc, title);
+            defer alloc.free(esc_title);
+            const entry = try std.fmt.allocPrint(alloc, "{{\"id\":{d},\"project_id\":{d},\"role_name\":{s},\"scope\":\"{s}\",\"entity_id\":{s},\"category\":\"{s}\",\"title\":\"{s}\",\"importance\":{d},\"created_at\":\"{s}\"}}", .{
+                mid,
+                project_id,
+                if (role_name) |rn| try std.fmt.allocPrint(alloc, "\"{s}\"", .{rn}) else "null",
+                scope,
+                if (entity_id) |eid| try std.fmt.allocPrint(alloc, "{d}", .{eid}) else "null",
+                category,
+                esc_title,
+                importance,
+                created_at,
+            });
+            try result.appendSlice(entry);
+            alloc.free(entry);
+        }
+        try result.appendSlice("]");
+        return result.toOwnedSlice() catch return error.OutOfMemory;
+    }
+
+    // GET /api/memories/{id} — get single memory
+    if (method == .GET and id != null) {
+        const mem = queries_memory.getById(conn, alloc, id.?) catch |err| return errJson(alloc, @errorName(err));
+        if (mem) |m| {
+            defer entities.freeMemoryEntry(alloc, m);
+            const esc_title = try jsonEscape(alloc, m.title);
+            defer alloc.free(esc_title);
+            const esc_content = try jsonEscape(alloc, m.content);
+            defer alloc.free(esc_content);
+            const esc_summary = if (m.summary) |s| try jsonEscape(alloc, s) else null;
+            defer if (esc_summary) |es| alloc.free(es);
+            const esc_tags = if (m.tags) |t| try jsonEscape(alloc, t) else null;
+            defer if (esc_tags) |et| alloc.free(et);
+            return std.fmt.allocPrint(alloc, \\{{"id":{d},"project_id":{d},"role_name":{s},"scope":"{s}","entity_id":{s},"category":"{s}","title":"{s}","content":"{s}","summary":{s},"tags":{s},"importance":{d},"access_count":{d},"created_at":"{s}","updated_at":"{s}"}}
+            , .{
+                m.id,
+                m.project_id,
+                if (m.role_name) |rn| try std.fmt.allocPrint(alloc, "\"{s}\"", .{rn}) else "null",
+                m.scope,
+                if (m.entity_id) |eid| try std.fmt.allocPrint(alloc, "{d}", .{eid}) else "null",
+                m.category,
+                esc_title,
+                esc_content,
+                if (esc_summary) |es| try std.fmt.allocPrint(alloc, "\"{s}\"", .{es}) else "null",
+                if (esc_tags) |et| try std.fmt.allocPrint(alloc, "\"{s}\"", .{et}) else "null",
+                m.importance,
+                m.access_count,
+                m.created_at,
+                m.updated_at,
+            });
+        }
+        return errJson(alloc, "not_found");
+    }
+
+    // POST /api/memories — create memory
+    if (method == .POST) {
+        const body_str = body orelse return errJson(alloc, "missing_body");
+        const parsed = std.json.parseFromSliceLeaky(MemoryCreatePayload, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
+
+        // Parse scope enum
+        const scope = lifecycle.memoryScopeFromDb(parsed.scope) orelse return errJson(alloc, "invalid_scope");
+
+        // Parse category enum
+        const category = lifecycle.memoryCategoryFromDb(parsed.category) orelse return errJson(alloc, "invalid_category");
+
+        // Parse importance enum (default: high)
+        const importance: lifecycle.MemoryImportance = if (parsed.importance) |imp| switch (imp[0]) {
+            '1' => .low,
+            '2' => .medium,
+            '3' => .high,
+            '4' => .critical,
+            else => .high,
+        } else .high;
+
+        const mem = queries_memory.insert(conn, alloc, parsed.project_id, parsed.role_name, scope, parsed.entity_id, category, parsed.title, parsed.content, parsed.summary, parsed.tags, importance) catch |err| {
+            if (err == error.ConstraintViolation) return errJson(alloc, "duplicate_memory");
+            return errJson(alloc, @errorName(err));
+        };
+        defer entities.freeMemoryEntry(alloc, mem);
+        return std.fmt.allocPrint(alloc, \\{{"id":{d},"title":"{s}"}}
+        , .{ mem.id, mem.title });
+    }
+
+    // PUT /api/memories/{id} — update memory
+    if (method == .PUT and id != null) {
+        const body_str = body orelse return errJson(alloc, "missing_body");
+        const parsed = std.json.parseFromSliceLeaky(MemoryUpdatePayload, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
+
+        var importance_opt: ?lifecycle.MemoryImportance = null;
+        if (parsed.importance) |imp| {
+            importance_opt = switch (imp[0]) {
+                '1' => .low,
+                '2' => .medium,
+                '3' => .high,
+                '4' => .critical,
+                else => return errJson(alloc, "invalid_importance"),
+            };
+        }
+
+        queries_memory.update(conn, alloc, id.?, parsed.title, parsed.content, parsed.summary, parsed.tags, importance_opt) catch |err| {
+            if (err == error.NoFieldsToUpdate) return errJson(alloc, "no_fields_to_update");
+            return errJson(alloc, @errorName(err));
+        };
+        return alloc.dupe(u8, "{\"success\":true}");
+    }
+
+    // DELETE /api/memories/{id} — delete memory
+    if (method == .DELETE and id != null) {
+        queries_memory.delete(conn, id.?) catch |err| return errJson(alloc, @errorName(err));
+        return alloc.dupe(u8, "{\"success\":true}");
+    }
+
+    return errJson(alloc, "method_not_allowed");
 }

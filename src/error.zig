@@ -30,6 +30,14 @@ pub const Errors = struct {
     pub const DB_ERROR = ErrorCode{ .code = "DB-001", .message = "Database operation failed" };
     pub const DB_BUSY = ErrorCode{ .code = "DB-002", .message = "Database is busy" };
 
+    // Memory errors
+    pub const MEMORY_CAP_EXCEEDED = ErrorCode{ .code = "MEM-001", .message = "Memory cap exceeded — consolidate before saving" };
+    pub const MEMORY_DUPLICATE = ErrorCode{ .code = "MEM-002", .message = "Duplicate memory entry" };
+    pub const MEMORY_INVALID_SCOPE = ErrorCode{ .code = "MEM-003", .message = "Invalid memory scope" };
+    pub const MEMORY_INVALID_CATEGORY = ErrorCode{ .code = "MEM-004", .message = "Invalid memory category" };
+    pub const MEMORY_INVALID_IMPORTANCE = ErrorCode{ .code = "MEM-005", .message = "Invalid importance level" };
+    pub const MEMORY_INVALID_ROLE = ErrorCode{ .code = "MEM-006", .message = "Invalid role name" };
+
     // Internal errors
     pub const INTERNAL = ErrorCode{ .code = "INT-001", .message = "Internal server error" };
     pub const UNKNOWN_TOOL = ErrorCode{ .code = "INT-002", .message = "Unknown tool name" };

@@ -225,3 +225,55 @@ pub fn freeComment(allocator: std.mem.Allocator, c: Comment) void {
     allocator.free(c.created_at);
     allocator.free(c.updated_at);
 }
+
+/// A memory entry for agent context retention across sessions.
+/// Stored in agent_memory table with FTS5 indexing.
+pub const MemoryEntry = struct {
+    id: i64,
+    project_id: i64,
+    role_name: ?[]const u8, // NULL for shared, 'architect'/'developer'/'qa'/'product_manager' for role-siloed
+    scope: []const u8, // 'project'/'epic'/'story'/'task'/'subtask'/'bug'/'wiki'
+    entity_id: ?i64, // NULL for project-level, entity ID for scoped memory
+    category: []const u8, // 'decision'/'blocker'/'pattern'/'outcome'/'note'/'learning'
+    title: []const u8,
+    content: []const u8,
+    summary: ?[]const u8 = null,
+    tags: ?[]const u8 = null, // JSON array of keywords
+    importance: u3, // 1=low, 2=medium, 3=high, 4=critical
+    access_count: i64,
+    last_accessed_at: ?[]const u8,
+    created_at: []const u8,
+    updated_at: []const u8,
+};
+
+/// Running project summary (narrative + structured bullets).
+/// Injected into every agent's context for continuity.
+pub const ProjectSummary = struct {
+    id: i64,
+    project_id: i64,
+    narrative: ?[]const u8 = null,
+    bullets: ?[]const u8 = null, // JSON array of structured bullet points
+    version: u32,
+    updated_at: []const u8,
+};
+
+/// Free all heap-allocated fields in a MemoryEntry
+pub fn freeMemoryEntry(allocator: std.mem.Allocator, m: MemoryEntry) void {
+    if (m.role_name) |r| allocator.free(r);
+    allocator.free(m.scope);
+    allocator.free(m.category);
+    allocator.free(m.title);
+    allocator.free(m.content);
+    if (m.summary) |s| allocator.free(s);
+    if (m.tags) |t| allocator.free(t);
+    if (m.last_accessed_at) |l| allocator.free(l);
+    allocator.free(m.created_at);
+    allocator.free(m.updated_at);
+}
+
+/// Free all heap-allocated fields in a ProjectSummary
+pub fn freeProjectSummary(allocator: std.mem.Allocator, s: ProjectSummary) void {
+    if (s.narrative) |n| allocator.free(n);
+    if (s.bullets) |b| allocator.free(b);
+    allocator.free(s.updated_at);
+}

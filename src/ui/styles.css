@@ -824,3 +824,94 @@
   border-color: var(--ring);
   box-shadow: 0 0 0 2px var(--primary-ghost);
 }
+
+/* ─── Memory View ─── */
+.memory-card {
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.memory-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+.memory-header {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+.scope-badge {
+  background: var(--primary-ghost);
+  color: var(--primary);
+  text-transform: uppercase;
+  font-size: var(--text-9);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.category-badge {
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+  text-transform: capitalize;
+}
+.role-badge {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.importance-indicator {
+  font-size: var(--text-9);
+  font-weight: 600;
+  margin-left: auto;
+}
+.memory-content {
+  margin-top: var(--space-2);
+  line-height: 1.6;
+  color: var(--foreground);
+}
+.memory-content code {
+  background: var(--muted);
+  padding: 0.1em 0.3em;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.9em;
+}
+.memory-content strong {
+  color: var(--primary);
+}
+.memory-content em {
+  color: var(--muted-foreground);
+}
+.memory-content .mention {
+  color: var(--primary);
+  font-weight: 500;
+}
+.memory-usage-bar {
+  margin-bottom: var(--space-4);
+  padding: var(--space-3);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.memory-usage-bar .usage-label {
+  font-size: var(--text-8);
+  color: var(--muted-foreground);
+  margin-bottom: var(--space-2);
+}
+.memory-usage-bar .usage-progress {
+  height: 6px;
+  background: var(--muted);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.memory-usage-bar .usage-progress-fill {
+  height: 100%;
+  background: var(--primary);
+  border-radius: var(--radius-sm);
+  transition: width 0.3s ease;
+}
+.memory-usage-bar .usage-progress-fill.warning {
+  background: var(--warning);
+}
+.memory-usage-bar .usage-progress-fill.danger {
+  background: var(--danger);
+}

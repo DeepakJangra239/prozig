@@ -60,6 +60,18 @@ function renderMarkdown(md) {
   return html;
 }
 
+// ─── Inline Markdown Renderer (for comments, memory entries) ───
+function renderCommentMarkdown(md) {
+  if (!md) return '';
+  let html = esc(md);
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  html = html.replace(/@(\w+)/g, '<span class="mention">@$1</span>');
+  html = html.replace(/\n/g, '<br>');
+  return html;
+}
+
 // ─── DOM Helpers ───
 const $ = s => document.querySelector(s);
 const $$ = s => document.querySelectorAll(s);
@@ -141,6 +153,7 @@ function switchView(view) {
   if (view === 'workflow') loadWorkflow();
   if (view === 'wiki') loadWiki();
   if (view === 'agents') loadAgents();
+  if (view === 'memories') loadMemories();
 }
 
 // ─── Dashboard ───
@@ -1050,6 +1063,114 @@ function showEditAgent(id) {
   });
   // Populate role dropdown with current selection
   populateAgentRoleDropdown('f-ea-role', agent.role_name || '');
+}
+
+// ─── Memories ───
+let memories = [];
+const MEMORY_IMPORTANCE_LABELS = { 1: 'Low', 2: 'Medium', 3: 'High', 4: 'Critical' };
+const MEMORY_IMPORTANCE_COLORS = { 1: '#6b7280', 2: '#eab308', 3: '#3b82f6', 4: '#ef4444' };
+
+async function loadMemories() {
+  try {
+    memories = await apiGet('/memories').catch(() => []);
+    renderMemories();
+    setupMemoryFilters();
+  } catch (e) { console.error('Memories:', e); }
+}
+
+function renderMemories() {
+  const c = $('#memory-list');
+  if (!c) return;
+  const scopeFilter = $('#memory-scope-filter')?.value || '';
+  const categoryFilter = $('#memory-category-filter')?.value || '';
+  let filtered = memories;
+  if (scopeFilter) filtered = filtered.filter(m => m.scope === scopeFilter);
+  if (categoryFilter) filtered = filtered.filter(m => m.category === categoryFilter);
+  if (!filtered.length) {
+    c.innerHTML = '<div class="empty-state"><p>No memories yet. Save project decisions, patterns, and learnings here.</p></div>';
+    return;
+  }
+  const $btn = $('#btn-new-memory');
+  if ($btn) $btn.onclick = showNewMemoryForm;
+  c.innerHTML = filtered.map(m => `
+    <article class="card memory-card" onclick="showMemoryDetail(${m.id})">
+      <div class="memory-header">
+        <span class="tag scope-badge">${esc(m.scope)}</span>
+        <span class="tag category-badge">${esc(m.category)}</span>
+        <span class="importance-indicator" style="color:${MEMORY_IMPORTANCE_COLORS[m.importance]||'#6b7280'}">● ${MEMORY_IMPORTANCE_LABELS[m.importance]||''}</span>
+      </div>
+      <h3>${esc(m.title)}</h3>
+      <p class="meta">${m.role_name ? `<span class="tag role-badge">${esc(m.role_name)}</span>` : '<span class="tag" style="background:var(--muted)">shared</span>'} · ${formatDate(m.created_at)}</p>
+    </article>
+  `).join('');
+}
+
+function setupMemoryFilters() {
+  const scopeFilter = $('#memory-scope-filter');
+  const categoryFilter = $('#memory-category-filter');
+  if (scopeFilter) scopeFilter.onchange = renderMemories;
+  if (categoryFilter) categoryFilter.onchange = renderMemories;
+}
+
+function showMemoryDetail(id) {
+  const mem = memories.find(m => m.id === id);
+  if (!mem) return;
+  const detailBody = $('#detail-body');
+  const detailTitle = $('#detail-title');
+  const deleteBtn = $('#detail-delete-btn');
+  detailTitle.textContent = mem.title;
+  deleteBtn.style.display = 'inline-flex';
+  deleteBtn.onclick = () => deleteMemory(id);
+  detailBody.innerHTML = `
+    <div style="display:flex;gap:var(--space-2);margin-bottom:var(--space-3);flex-wrap:wrap">
+      <span class="tag scope-badge">${esc(mem.scope)}</span>
+      <span class="tag category-badge">${esc(mem.category)}</span>
+      <span class="importance-indicator" style="color:${MEMORY_IMPORTANCE_COLORS[mem.importance]||'#6b7280'}">● ${MEMORY_IMPORTANCE_LABELS[mem.importance]||''}</span>
+      ${mem.role_name ? `<span class="tag role-badge">${esc(mem.role_name)}</span>` : '<span class="tag" style="background:var(--muted)">shared</span>'}
+    </div>
+    <div class="memory-content">${renderCommentMarkdown(mem.content||'')}</div>
+    ${mem.summary ? `<div style="margin-top:var(--space-3);padding:var(--space-2);background:var(--muted);border-radius:var(--radius-sm)"><strong>Summary:</strong><br>${renderCommentMarkdown(mem.summary)}</div>` : ''}
+    ${mem.tags ? `<div style="margin-top:var(--space-2)">${(mem.tags).split(',').map(t => `<span class="tag">${esc(t.trim())}</span>`).join('')}</div>` : ''}
+    <p class="meta" style="margin-top:var(--space-3)">Created: ${formatDate(mem.created_at)} · Updated: ${formatDate(mem.updated_at)} · Accesses: ${mem.access_count||0}</p>
+  `;
+  $('#detail-dialog').showModal();
+}
+
+async function deleteMemory(id) {
+  if (!confirm('Delete this memory?')) return;
+  await apiDelete(`/memories/${id}`);
+  ot.toast('Memory deleted', '', { variant: 'success' });
+  loadMemories();
+}
+
+function showNewMemoryForm() {
+  if (!currentProject) { ot.toast('Select a project first', '', { variant: 'danger' }); return; }
+  openModal('New Memory', `
+    <div data-field><label>Scope *</label><select id="f-m-scope" required><option value="project">Project</option><option value="epic">Epic</option><option value="story">Story</option><option value="task">Task</option><option value="bug">Bug</option><option value="wiki">Wiki</option></select></div>
+    <div data-field><label>Category *</label><select id="f-m-category" required><option value="decision">Decision</option><option value="blocker">Blocker</option><option value="pattern">Pattern</option><option value="outcome">Outcome</option><option value="note">Note</option><option value="learning">Learning</option></select></div>
+    <div data-field><label>Title *</label><input type="text" id="f-m-title" placeholder="Memory title" required></div>
+    <div data-field><label>Content *</label><textarea id="f-m-content" rows="4" placeholder="Full memory content" required></textarea></div>
+    <div data-field><label>Summary</label><textarea id="f-m-summary" rows="2" placeholder="Brief summary"></textarea></div>
+    <div data-field><label>Tags</label><input type="text" id="f-m-tags" placeholder="auth, jwt, security"></div>
+    <div data-field><label>Importance</label><select id="f-m-importance"><option value="3">High</option><option value="1">Low</option><option value="2">Medium</option><option value="4">Critical</option></select></div>
+  `, 'Save', async () => {
+    const title = $('#f-m-title').value.trim();
+    const content = $('#f-m-content').value.trim();
+    if (!title) { ot.toast('Title is required', '', { variant: 'danger' }); return; }
+    if (!content) { ot.toast('Content is required', '', { variant: 'danger' }); return; }
+    await apiPost('/memories', {
+      project_id: currentProject,
+      scope: $('#f-m-scope').value,
+      category: $('#f-m-category').value,
+      title,
+      content,
+      summary: $('#f-m-summary').value.trim() || null,
+      tags: $('#f-m-tags').value.trim() || null,
+      importance: $('#f-m-importance').value,
+    });
+    ot.toast('Memory saved', '', { variant: 'success' });
+    loadMemories();
+  });
 }
 
 // ─── Modal Dialog ───

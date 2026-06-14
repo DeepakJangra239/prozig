@@ -1,9 +1,11 @@
 const Server = @import("../types.zig").Server;
 const std = @import("std");
 const json = @import("../json.zig");
+const db = @import("../../db/connection.zig");
 const errorz = @import("../../error.zig");
 const entities = @import("../../domain/entities.zig");
 const assignment_svc = @import("../../service/assignment.zig");
+const queries_memory = @import("../../db/queries/memory.zig");
 
 pub fn handle(s: *Server, tool_name: []const u8, args: json.JsonValue) ![]const u8 {
     const alloc = s.allocator;
@@ -37,7 +39,25 @@ pub fn handle(s: *Server, tool_name: []const u8, args: json.JsonValue) ![]const 
         };
         defer alloc.free(work);
 
-        return json.stringifyTextResponse(alloc, work);
+        var buf = std.array_list.Managed(u8).init(alloc);
+        defer buf.deinit();
+        try buf.appendSlice(work);
+
+        // Memory injection: project summaries for projects with assigned work
+        var project_ids = try getDistinctProjectIds(s.conn, alloc, agent_id);
+        defer {
+            for (project_ids.items) |pid| alloc.free(pid);
+            project_ids.deinit(alloc);
+        }
+        for (project_ids.items) |pid_str| {
+            const pid = std.fmt.parseInt(i64, pid_str, 10) catch continue;
+            if (try queries_memory.formatProjectSummaryForResponse(alloc, s.conn, pid)) |summary_str| {
+                defer alloc.free(summary_str);
+                try buf.appendSlice(summary_str);
+            }
+        }
+
+        return json.stringifyTextResponse(alloc, buf.items);
     }
 
     if (std.mem.eql(u8, tool_name, "suggest_assignment")) {
@@ -66,4 +86,33 @@ pub fn handle(s: *Server, tool_name: []const u8, args: json.JsonValue) ![]const 
     }
 
     return json.stringifyCatalogError(alloc, errorz.Errors.UNKNOWN_TOOL.code, errorz.Errors.UNKNOWN_TOOL.message, tool_name);
+}
+
+/// Get distinct project IDs from all entities assigned to an agent.
+fn getDistinctProjectIds(conn: *db.Connection, allocator: std.mem.Allocator, agent_id: i64) !std.ArrayList([]const u8) {
+    var result = std.ArrayList([]const u8).empty;
+    // Query distinct project_ids from all entity types
+    const query =
+        \\SELECT DISTINCT project_id FROM epics WHERE assignee_agent_id = ?
+        \\UNION SELECT DISTINCT project_id FROM stories WHERE assignee_agent_id = ?
+        \\UNION SELECT DISTINCT project_id FROM tasks WHERE assignee_agent_id = ?
+        \\UNION SELECT DISTINCT project_id FROM subtasks WHERE assignee_agent_id = ?
+        \\UNION SELECT DISTINCT project_id FROM bugs WHERE assignee_agent_id = ?
+    ;
+    var stmt = try conn.prepare(query);
+    defer stmt.finalize();
+    stmt.bindInt64(1, agent_id);
+    stmt.bindInt64(2, agent_id);
+    stmt.bindInt64(3, agent_id);
+    stmt.bindInt64(4, agent_id);
+    stmt.bindInt64(5, agent_id);
+
+    while (true) {
+        const step_result = stmt.step() catch break;
+        if (step_result != .row) break;
+        const pid = stmt.columnInt64(0);
+        const pid_str = try std.fmt.allocPrint(allocator, "{d}", .{pid});
+        try result.append(allocator, pid_str);
+    }
+    return result;
 }

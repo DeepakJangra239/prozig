@@ -363,3 +363,109 @@ test "BUG-006: get_my_work uses correct plural 'stories'" {
         std.testing.allocator.free(r);
     }
 }
+
+// Memory: MCP tool acceptance tests
+test "memory: memory_save creates entry" {
+    var s = try setupServer(std.testing.allocator);
+    defer s.conn.deinit();
+    try setupProject(&s.server);
+
+    const resp = try s.server.handleMessage("{\"jsonrpc\":\"2.0\",\"id\":70,\"method\":\"tools/call\",\"params\":{\"name\":\"memory_save\",\"arguments\":{\"project_id\":\"1\",\"scope\":\"project\",\"category\":\"decision\",\"title\":\"This is a valid memory title\",\"content\":\"This is valid memory content that meets the minimum length requirement for testing\",\"importance\":\"3\"}}}");
+    try std.testing.expect(resp != null);
+    if (resp) |r| {
+        try std.testing.expect(std.mem.indexOf(u8, r, "Memory saved") != null);
+        std.testing.allocator.free(r);
+    }
+}
+
+test "memory: memory_get retrieves entries" {
+    var s = try setupServer(std.testing.allocator);
+    defer s.conn.deinit();
+    try setupProject(&s.server);
+    _ = try s.server.handleMessage("{\"jsonrpc\":\"2.0\",\"id\":71,\"method\":\"tools/call\",\"params\":{\"name\":\"memory_save\",\"arguments\":{\"project_id\":\"1\",\"scope\":\"project\",\"category\":\"decision\",\"title\":\"This is a valid memory title\",\"content\":\"This is valid memory content that meets the minimum length requirement for testing\",\"importance\":\"3\"}}}");
+
+    const resp = try s.server.handleMessage("{\"jsonrpc\":\"2.0\",\"id\":72,\"method\":\"tools/call\",\"params\":{\"name\":\"memory_get\",\"arguments\":{\"project_id\":\"1\"}}}");
+    try std.testing.expect(resp != null);
+    if (resp) |r| {
+        try std.testing.expect(std.mem.indexOf(u8, r, "Found") != null);
+        std.testing.allocator.free(r);
+    }
+}
+
+test "memory: memory_list lists entries" {
+    var s = try setupServer(std.testing.allocator);
+    defer s.conn.deinit();
+    try setupProject(&s.server);
+    _ = try s.server.handleMessage("{\"jsonrpc\":\"2.0\",\"id\":73,\"method\":\"tools/call\",\"params\":{\"name\":\"memory_save\",\"arguments\":{\"project_id\":\"1\",\"scope\":\"project\",\"category\":\"decision\",\"title\":\"This is a valid memory title\",\"content\":\"This is valid memory content that meets the minimum length requirement for testing\",\"importance\":\"3\"}}}");
+
+    const resp = try s.server.handleMessage("{\"jsonrpc\":\"2.0\",\"id\":74,\"method\":\"tools/call\",\"params\":{\"name\":\"memory_list\",\"arguments\":{\"project_id\":\"1\"}}}");
+    try std.testing.expect(resp != null);
+    if (resp) |r| {
+        try std.testing.expect(std.mem.indexOf(u8, r, "Found") != null);
+        std.testing.allocator.free(r);
+    }
+}
+
+test "memory: memory_delete deletes entry" {
+    var s = try setupServer(std.testing.allocator);
+    defer s.conn.deinit();
+    try setupProject(&s.server);
+    const save_resp = try s.server.handleMessage("{\"jsonrpc\":\"2.0\",\"id\":75,\"method\":\"tools/call\",\"params\":{\"name\":\"memory_save\",\"arguments\":{\"project_id\":\"1\",\"scope\":\"project\",\"category\":\"decision\",\"title\":\"This is a valid memory title\",\"content\":\"This is valid memory content that meets the minimum length requirement for testing\",\"importance\":\"3\"}}}");
+    if (save_resp) |r| std.testing.allocator.free(r);
+
+    const resp = try s.server.handleMessage("{\"jsonrpc\":\"2.0\",\"id\":76,\"method\":\"tools/call\",\"params\":{\"name\":\"memory_delete\",\"arguments\":{\"entity_id\":\"1\",\"project_id\":\"1\"}}}");
+    try std.testing.expect(resp != null);
+    if (resp) |r| {
+        try std.testing.expect(std.mem.indexOf(u8, r, "Memory deleted") != null);
+        std.testing.allocator.free(r);
+    }
+}
+
+test "memory: memory_update updates entry" {
+    var s = try setupServer(std.testing.allocator);
+    defer s.conn.deinit();
+    try setupProject(&s.server);
+    _ = try s.server.handleMessage("{\"jsonrpc\":\"2.0\",\"id\":77,\"method\":\"tools/call\",\"params\":{\"name\":\"memory_save\",\"arguments\":{\"project_id\":\"1\",\"scope\":\"project\",\"category\":\"decision\",\"title\":\"This is a valid memory title\",\"content\":\"This is valid memory content that meets the minimum length requirement for testing\",\"importance\":\"3\"}}}");
+
+    const resp = try s.server.handleMessage("{\"jsonrpc\":\"2.0\",\"id\":78,\"method\":\"tools/call\",\"params\":{\"name\":\"memory_update\",\"arguments\":{\"entity_id\":\"1\",\"project_id\":\"1\",\"title\":\"Updated memory title here\"}}}");
+    try std.testing.expect(resp != null);
+    if (resp) |r| {
+        try std.testing.expect(std.mem.indexOf(u8, r, "Memory updated") != null);
+        std.testing.allocator.free(r);
+    }
+}
+
+test "memory: update_project_summary updates summary" {
+    var s = try setupServer(std.testing.allocator);
+    defer s.conn.deinit();
+    try setupProject(&s.server);
+
+    const resp = try s.server.handleMessage("{\"jsonrpc\":\"2.0\",\"id\":79,\"method\":\"tools/call\",\"params\":{\"name\":\"update_project_summary\",\"arguments\":{\"project_id\":\"1\",\"narrative\":\"This is a project narrative summary that meets minimum length\"}}}");
+    try std.testing.expect(resp != null);
+    if (resp) |r| {
+        try std.testing.expect(std.mem.indexOf(u8, r, "Project summary updated") != null);
+        std.testing.allocator.free(r);
+    }
+}
+
+test "memory: task_get includes memory injection" {
+    var s = try setupServer(std.testing.allocator);
+    defer s.conn.deinit();
+    try setupProject(&s.server);
+    try setupEpic(&s.server);
+    try setupStory(&s.server);
+    try setupTask(&s.server);
+    // Save project summary
+    _ = try s.server.handleMessage("{\"jsonrpc\":\"2.0\",\"id\":80,\"method\":\"tools/call\",\"params\":{\"name\":\"update_project_summary\",\"arguments\":{\"project_id\":\"1\",\"narrative\":\"This is a project narrative summary that meets minimum length\"}}}");
+    // Save memory for task
+    _ = try s.server.handleMessage("{\"jsonrpc\":\"2.0\",\"id\":81,\"method\":\"tools/call\",\"params\":{\"name\":\"memory_save\",\"arguments\":{\"project_id\":\"1\",\"scope\":\"task\",\"entity_id\":\"1\",\"category\":\"decision\",\"title\":\"This is a valid memory title\",\"content\":\"This is valid memory content that meets the minimum length requirement for testing\",\"importance\":\"3\"}}}");
+
+    const resp = try s.server.handleMessage("{\"jsonrpc\":\"2.0\",\"id\":82,\"method\":\"tools/call\",\"params\":{\"name\":\"task_get\",\"arguments\":{\"entity_id\":\"1\"}}}");
+    try std.testing.expect(resp != null);
+    if (resp) |r| {
+        try std.testing.expect(std.mem.indexOf(u8, r, "Task:") != null);
+        try std.testing.expect(std.mem.indexOf(u8, r, "Project Summary") != null);
+        try std.testing.expect(std.mem.indexOf(u8, r, "Related Memory") != null);
+        std.testing.allocator.free(r);
+    }
+}

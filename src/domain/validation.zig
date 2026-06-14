@@ -1,5 +1,6 @@
 const std = @import("std");
 const errors = @import("../error.zig");
+const lifecycle = @import("lifecycle.zig");
 
 /// Minimum length for entity titles — reject single-character placeholders.
 pub const MIN_TITLE_LEN: usize = 3;
@@ -216,4 +217,136 @@ test "validateBug: rejects invalid severity" {
 
 test "validateBug: rejects short title" {
     try std.testing.expectError(error.MissingField, validateBug(1, "ab", "Desc with enough content", "high"));
+}
+
+// ── Memory Validation ──
+
+/// Minimum length for memory titles
+pub const MIN_MEMORY_TITLE_LEN: usize = 10;
+/// Maximum length for memory titles
+pub const MAX_MEMORY_TITLE_LEN: usize = 200;
+/// Minimum length for memory content
+pub const MIN_MEMORY_CONTENT_LEN: usize = 50;
+/// Maximum length for memory content
+pub const MAX_MEMORY_CONTENT_LEN: usize = 2000;
+/// Minimum length for memory summary
+pub const MIN_MEMORY_SUMMARY_LEN: usize = 5;
+/// Maximum length for memory summary
+pub const MAX_MEMORY_SUMMARY_LEN: usize = 500;
+/// Maximum number of tags per memory entry
+pub const MAX_MEMORY_TAGS: usize = 20;
+/// Default memory cap in bytes (10MB)
+pub const DEFAULT_MEMORY_CAP_BYTES: usize = 10485760;
+
+/// Validate memory save fields
+pub fn validateMemorySave(
+    project_id: i64,
+    scope: lifecycle.MemoryScope,
+    category: lifecycle.MemoryCategory,
+    title: []const u8,
+    content: []const u8,
+    summary: ?[]const u8,
+    tags: ?[]const u8,
+    importance: lifecycle.MemoryImportance,
+) !void {
+    _ = scope;
+    _ = category;
+    _ = importance;
+    if (project_id <= 0) return error.InvalidField;
+    if (title.len < MIN_MEMORY_TITLE_LEN or title.len > MAX_MEMORY_TITLE_LEN) return error.InvalidField;
+    if (content.len < MIN_MEMORY_CONTENT_LEN or content.len > MAX_MEMORY_CONTENT_LEN) return error.InvalidField;
+    if (summary) |s| {
+        if (s.len < MIN_MEMORY_SUMMARY_LEN or s.len > MAX_MEMORY_SUMMARY_LEN) return error.InvalidField;
+    }
+    if (tags) |t| {
+        // Validate as JSON array — basic check for brackets
+        if (t.len == 0) return error.InvalidField;
+        if (t[0] != '[') return error.InvalidField;
+    }
+}
+
+/// Validate memory update fields (at least one must be provided)
+pub fn validateMemoryUpdate(
+    title: ?[]const u8,
+    content: ?[]const u8,
+    summary: ?[]const u8,
+    tags: ?[]const u8,
+    importance: ?lifecycle.MemoryImportance,
+) !void {
+    _ = importance;
+    if (title == null and content == null and summary == null and tags == null)
+        return error.MissingField;
+    if (title) |t| {
+        if (t.len < MIN_MEMORY_TITLE_LEN or t.len > MAX_MEMORY_TITLE_LEN) return error.InvalidField;
+    }
+    if (content) |c| {
+        if (c.len < MIN_MEMORY_CONTENT_LEN or c.len > MAX_MEMORY_CONTENT_LEN) return error.InvalidField;
+    }
+    if (summary) |s| {
+        if (s.len < MIN_MEMORY_SUMMARY_LEN or s.len > MAX_MEMORY_SUMMARY_LEN) return error.InvalidField;
+    }
+    if (tags) |t| {
+        if (t.len == 0) return error.InvalidField;
+        if (t[0] != '[') return error.InvalidField;
+    }
+}
+
+// ── Memory Validation Tests ──
+
+test "validateMemorySave: accepts valid fields" {
+    try validateMemorySave(1, .project, .decision, "This is a valid memory title", "This is valid memory content that meets the minimum length requirement for testing", null, null, .high);
+}
+
+test "validateMemorySave: accepts valid summary" {
+    try validateMemorySave(1, .project, .decision, "This is a valid memory title", "This is valid memory content that meets the minimum length requirement for testing", "Valid summary", null, .high);
+}
+
+test "validateMemorySave: accepts valid tags" {
+    try validateMemorySave(1, .project, .decision, "This is a valid memory title", "This is valid memory content that meets the minimum length requirement for testing", null, "[\"tag1\",\"tag2\"]", .high);
+}
+
+test "validateMemorySave: rejects short title" {
+    try std.testing.expectError(error.InvalidField, validateMemorySave(1, .project, .decision, "Short", "This is valid memory content that meets the minimum length requirement for testing", null, null, .high));
+}
+
+test "validateMemorySave: rejects long title" {
+    var long_title: [201]u8 = undefined;
+    @memset(&long_title, 'x');
+    try std.testing.expectError(error.InvalidField, validateMemorySave(1, .project, .decision, &long_title, "This is valid memory content that meets the minimum length requirement for testing", null, null, .high));
+}
+
+test "validateMemorySave: rejects short content" {
+    try std.testing.expectError(error.InvalidField, validateMemorySave(1, .project, .decision, "This is a valid memory title", "Too short", null, null, .high));
+}
+
+test "validateMemorySave: rejects empty project_id" {
+    try std.testing.expectError(error.InvalidField, validateMemorySave(0, .project, .decision, "This is a valid memory title", "This is valid memory content that meets the minimum length requirement for testing", null, null, .high));
+}
+
+test "validateMemorySave: rejects short summary" {
+    try std.testing.expectError(error.InvalidField, validateMemorySave(1, .project, .decision, "This is a valid memory title", "This is valid memory content that meets the minimum length requirement for testing", "abc", null, .high));
+}
+
+test "validateMemorySave: rejects invalid tags format" {
+    try std.testing.expectError(error.InvalidField, validateMemorySave(1, .project, .decision, "This is a valid memory title", "This is valid memory content that meets the minimum length requirement for testing", null, "not-json", .high));
+}
+
+test "validateMemoryUpdate: accepts valid title" {
+    try validateMemoryUpdate("This is a valid updated title", null, null, null, null);
+}
+
+test "validateMemoryUpdate: accepts valid content" {
+    try validateMemoryUpdate(null, "This is valid memory content that meets the minimum length requirement for testing", null, null, null);
+}
+
+test "validateMemoryUpdate: rejects no fields provided" {
+    try std.testing.expectError(error.MissingField, validateMemoryUpdate(null, null, null, null, null));
+}
+
+test "validateMemoryUpdate: rejects short title" {
+    try std.testing.expectError(error.InvalidField, validateMemoryUpdate("Short", null, null, null, null));
+}
+
+test "validateMemoryUpdate: rejects short content" {
+    try std.testing.expectError(error.InvalidField, validateMemoryUpdate(null, "Too short", null, null, null));
 }

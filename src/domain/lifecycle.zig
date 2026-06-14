@@ -57,6 +57,46 @@ pub const BugStatus = enum {
     cancelled,
 };
 
+// ── Memory Enums ──
+
+/// Scope of a memory entry (what entity it relates to)
+pub const MemoryScope = enum {
+    project,
+    epic,
+    story,
+    task,
+    subtask,
+    bug,
+    wiki,
+};
+
+/// Category of a memory entry (type of information)
+pub const MemoryCategory = enum {
+    decision,
+    blocker,
+    pattern,
+    outcome,
+    note,
+    learning,
+};
+
+/// Importance level for memory ranking
+pub const MemoryImportance = enum(u3) {
+    low = 1,
+    medium = 2,
+    high = 3,
+    critical = 4,
+};
+
+/// Role for role-siloed memory entries
+pub const MemoryRole = enum {
+    architect,
+    developer,
+    qa,
+    product_manager,
+    shared,
+};
+
 // ── Serialization: enum → DB string ──
 
 pub fn epicStatusToDb(s: EpicStatus) []const u8 {
@@ -186,6 +226,85 @@ pub fn defaultStatus(entity_type: EntityType) []const u8 {
         .task, .subtask => "Todo",
         .bug => "New",
     };
+}
+
+// ── Memory Enum Serialization ──
+
+pub fn memoryScopeToDb(s: MemoryScope) []const u8 {
+    return switch (s) {
+        .project => "project",
+        .epic => "epic",
+        .story => "story",
+        .task => "task",
+        .subtask => "subtask",
+        .bug => "bug",
+        .wiki => "wiki",
+    };
+}
+
+pub fn memoryScopeFromDb(s: []const u8) ?MemoryScope {
+    if (std.mem.eql(u8, s, "project")) return .project;
+    if (std.mem.eql(u8, s, "epic")) return .epic;
+    if (std.mem.eql(u8, s, "story")) return .story;
+    if (std.mem.eql(u8, s, "task")) return .task;
+    if (std.mem.eql(u8, s, "subtask")) return .subtask;
+    if (std.mem.eql(u8, s, "bug")) return .bug;
+    if (std.mem.eql(u8, s, "wiki")) return .wiki;
+    return null;
+}
+
+pub fn memoryCategoryToDb(c: MemoryCategory) []const u8 {
+    return switch (c) {
+        .decision => "decision",
+        .blocker => "blocker",
+        .pattern => "pattern",
+        .outcome => "outcome",
+        .note => "note",
+        .learning => "learning",
+    };
+}
+
+pub fn memoryCategoryFromDb(s: []const u8) ?MemoryCategory {
+    if (std.mem.eql(u8, s, "decision")) return .decision;
+    if (std.mem.eql(u8, s, "blocker")) return .blocker;
+    if (std.mem.eql(u8, s, "pattern")) return .pattern;
+    if (std.mem.eql(u8, s, "outcome")) return .outcome;
+    if (std.mem.eql(u8, s, "note")) return .note;
+    if (std.mem.eql(u8, s, "learning")) return .learning;
+    return null;
+}
+
+pub fn memoryImportanceToDb(i: MemoryImportance) u3 {
+    return @intFromEnum(i);
+}
+
+pub fn memoryImportanceFromDb(v: u2) ?MemoryImportance {
+    return switch (v) {
+        1 => .low,
+        2 => .medium,
+        3 => .high,
+        4 => .critical,
+        else => null,
+    };
+}
+
+pub fn memoryRoleToDb(r: MemoryRole) []const u8 {
+    return switch (r) {
+        .architect => "architect",
+        .developer => "developer",
+        .qa => "qa",
+        .product_manager => "product_manager",
+        .shared => "shared",
+    };
+}
+
+pub fn memoryRoleFromDb(s: []const u8) ?MemoryRole {
+    if (std.mem.eql(u8, s, "architect")) return .architect;
+    if (std.mem.eql(u8, s, "developer")) return .developer;
+    if (std.mem.eql(u8, s, "qa")) return .qa;
+    if (std.mem.eql(u8, s, "product_manager")) return .product_manager;
+    if (std.mem.eql(u8, s, "shared")) return .shared;
+    return null;
 }
 
 // ── Enum-based validation ──
@@ -758,4 +877,54 @@ test "validateTransition: accepts valid bug transition" {
 test "validateTransition: rejects invalid bug transition" {
     const result = validateTransition(.bug, "New", "Closed");
     try std.testing.expectError(error.InvalidTransition, result);
+}
+
+// ── Memory Enum Serialization Tests ──
+
+test "serialization: memoryScopeToDb roundtrip" {
+    const scopes = [_]MemoryScope{ .project, .epic, .story, .task, .subtask, .bug, .wiki };
+    for (scopes) |s| {
+        const db_str = memoryScopeToDb(s);
+        const parsed = memoryScopeFromDb(db_str);
+        try std.testing.expect(parsed != null);
+        try std.testing.expectEqual(s, parsed.?);
+    }
+}
+
+test "serialization: memoryCategoryToDb roundtrip" {
+    const categories = [_]MemoryCategory{ .decision, .blocker, .pattern, .outcome, .note, .learning };
+    for (categories) |c| {
+        const db_str = memoryCategoryToDb(c);
+        const parsed = memoryCategoryFromDb(db_str);
+        try std.testing.expect(parsed != null);
+        try std.testing.expectEqual(c, parsed.?);
+    }
+}
+
+test "serialization: memoryImportanceToDb roundtrip" {
+    const importances = [_]MemoryImportance{ .low, .medium, .high, .critical };
+    for (importances) |i| {
+        const db_val = memoryImportanceToDb(i);
+        const parsed = memoryImportanceFromDb(db_val);
+        try std.testing.expect(parsed != null);
+        try std.testing.expectEqual(i, parsed.?);
+    }
+}
+
+test "serialization: memoryRoleToDb roundtrip" {
+    const roles = [_]MemoryRole{ .architect, .developer, .qa, .product_manager, .shared };
+    for (roles) |r| {
+        const db_str = memoryRoleToDb(r);
+        const parsed = memoryRoleFromDb(db_str);
+        try std.testing.expect(parsed != null);
+        try std.testing.expectEqual(r, parsed.?);
+    }
+}
+
+test "serialization: memory enums return null for invalid strings" {
+    try std.testing.expect(memoryScopeFromDb("invalid") == null);
+    try std.testing.expect(memoryCategoryFromDb("invalid") == null);
+    try std.testing.expect(memoryRoleFromDb("invalid") == null);
+    try std.testing.expect(memoryImportanceFromDb(0) == null);
+    try std.testing.expect(memoryImportanceFromDb(5) == null);
 }
