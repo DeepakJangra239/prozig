@@ -77,9 +77,15 @@ pub fn deleteTaskWithChildren(srv: *Service, task_id: i64) !void {
 // ─── Simple Delete Operations ───
 
 pub fn deleteWiki(srv: *Service, page_id: i64) !void {
-    try queries_wiki.delete(srv.conn, page_id);
+    srv.conn.begin() catch |err| return err;
+    errdefer srv.conn.rollback();
+    try queries_wiki.deleteWithHistory(srv.conn, page_id);
+    try srv.conn.commit();
 }
 
 pub fn deleteAgent(srv: *Service, agent_id: i64) !void {
-    try queries_agents.delete(srv.conn, agent_id);
+    srv.conn.begin() catch |err| return err;
+    errdefer srv.conn.rollback();
+    try queries_agents.deleteWithCleanup(srv.conn, agent_id);
+    try srv.conn.commit();
 }

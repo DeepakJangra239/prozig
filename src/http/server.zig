@@ -1321,17 +1321,14 @@ const CommentCreatePayload = struct {
 };
 
 fn handleCommentsApi(conn: *db.Connection, alloc: std.mem.Allocator, method: std.http.Method, it: *std.mem.SplitIterator(u8, .scalar), body: ?[]u8) ![]u8 {
-    const comment_id_str = it.next();
-    const comment_id = if (comment_id_str) |s| parseId(s) catch null else null;
+    // Check method first to determine URL pattern:
+    // - GET /api/comments/{entity_type}/{entity_id} - list comments for entity
+    // - POST /api/comments - create comment (body has entity info)
+    // - PUT /api/comments/{id} - update comment content
+    // - DELETE /api/comments/{id} - delete comment
 
-    // GET /api/comments?entity_type=...&entity_id=...
-    if (method == .GET and comment_id == null) {
-        // Parse query string from the path iterator — but we need the query params.
-        // The path is /api/comments?entity_type=epic&entity_id=1
-        // Since we don't have query string parsing, we use a simpler approach:
-        // GET /api/comments/{entity_type}/{entity_id}
-        // Actually, let's use the body for POST and query params for GET.
-        // For now, let's use a path-based approach: GET /api/comments/{entity_type}/{entity_id}
+    // GET /api/comments/{entity_type}/{entity_id}
+    if (method == .GET) {
         const entity_type = it.next() orelse return errJson(alloc, "missing_entity_type");
         const entity_id_str = it.next() orelse return errJson(alloc, "missing_entity_id");
         const entity_id = parseId(entity_id_str) catch return errJson(alloc, "invalid_entity_id");
@@ -1373,6 +1370,10 @@ fn handleCommentsApi(conn: *db.Connection, alloc: std.mem.Allocator, method: std
         return std.fmt.allocPrint(alloc, \\{{"id":{d},"author_name":"{s}"}}
         , .{ comment.id, parsed.author_name });
     }
+
+    // For PUT/DELETE, consume comment_id from path
+    const comment_id_str = it.next();
+    const comment_id = if (comment_id_str) |s| parseId(s) catch null else null;
 
     // PUT /api/comments/{id} — update comment content (human can edit any)
     if (method == .PUT and comment_id != null) {

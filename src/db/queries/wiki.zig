@@ -178,3 +178,19 @@ pub fn delete(conn: *db.Connection, page_id: i64) !void {
     stmt.bindInt64(1, page_id);
     _ = try stmt.step();
 }
+
+/// Delete a wiki page and its history records. Must be called within a
+/// transaction (service layer) so both deletes succeed or both roll back.
+pub fn deleteWithHistory(conn: *db.Connection, page_id: i64) !void {
+    // Delete history first (child table)
+    var hist_stmt = try conn.prepare("DELETE FROM wiki_history WHERE page_id = ?");
+    defer hist_stmt.finalize();
+    hist_stmt.bindInt64(1, page_id);
+    _ = try hist_stmt.step();
+
+    // Delete the page (parent table)
+    var stmt = try conn.prepare("DELETE FROM wiki_pages WHERE id = ?");
+    defer stmt.finalize();
+    stmt.bindInt64(1, page_id);
+    _ = try stmt.step();
+}

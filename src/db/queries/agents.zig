@@ -95,3 +95,34 @@ pub fn delete(conn: *db.Connection, agent_id: i64) !void {
     stmt.bindInt64(1, agent_id);
     _ = try stmt.step();
 }
+
+/// Delete an agent profile and null out all foreign key references.
+/// Must be called within a transaction (service layer) so all operations
+/// succeed or roll back together. Nulls out assignee_agent_id in entity
+/// tables and author_id in comments before deleting the agent.
+pub fn deleteWithCleanup(conn: *db.Connection, agent_id: i64) !void {
+    // Null out assignee references in entity tables
+    const tables = [_][]const u8{ "epics", "stories", "tasks", "subtasks", "bugs" };
+    for (tables) |table| {
+        const sql = try std.fmt.allocPrint(std.heap.page_allocator, "UPDATE {s} SET assignee_agent_id = NULL WHERE assignee_agent_id = ?", .{table});
+        defer std.heap.page_allocator.free(sql);
+        var stmt = try conn.prepare(sql);
+        defer stmt.finalize();
+        stmt.bindInt64(1, agent_id);
+        _ = try stmt.step();
+    }
+
+    // Null out comment author references
+    {
+        var stmt = try conn.prepare("UPDATE comments SET author_id = NULL WHERE author_id = ?");
+        defer stmt.finalize();
+        stmt.bindInt64(1, agent_id);
+        _ = try stmt.step();
+    }
+
+    // Delete the agent profile
+    var stmt = try conn.prepare("DELETE FROM agent_profiles WHERE id = ?");
+    defer stmt.finalize();
+    stmt.bindInt64(1, agent_id);
+    _ = try stmt.step();
+}
