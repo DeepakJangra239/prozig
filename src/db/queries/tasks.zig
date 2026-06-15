@@ -123,3 +123,19 @@ pub fn updatePartial(conn: *db.Connection, allocator: std.mem.Allocator, task_id
     stmt.bindInt64(@intCast(idx), task_id);
     _ = try stmt.step();
 }
+
+/// Delete a task and all its child data (subtasks).
+/// This function is designed to be called within a transaction.
+pub fn deleteWithChildren(conn: *db.Connection, task_id: i64) !void {
+    // Delete subtasks
+    var stmt = try conn.prepare("DELETE FROM subtasks WHERE task_id = ?");
+    defer stmt.finalize();
+    stmt.bindInt64(1, task_id);
+    _ = try stmt.step();
+
+    // Delete task
+    var delTask = try conn.prepare("DELETE FROM tasks WHERE id = ?");
+    defer delTask.finalize();
+    delTask.bindInt64(1, task_id);
+    _ = try delTask.step();
+}

@@ -20,7 +20,7 @@ Project
 
 ## Features
 
-- **MCP Server**: JSON-RPC 2.0 over stdio with 39 tool handlers for full CRUD operations
+- **MCP Server**: JSON-RPC 2.0 over stdio with 45 tool handlers for full CRUD operations
 - **HTTP Dashboard**: Embedded web UI with REST API on port 9181
 - **SQLite Storage**: Local-first, single-file database at `~/.prozig/tracker.db`
 - **Entity Lifecycles**: Strict state machine validation per entity type
@@ -37,6 +37,9 @@ Project
 - **PATCH Updates**: Partial updates on all entities — only provided fields change
 - **Priority Levels**: Critical, high, medium, low on all work items
 - **Seed Data**: Auto-seeds workflow config, roles, and permissions on project init
+- **Agent Memory**: Hybrid-tier memory system with BM25 full-text search, role-siloed entries, and auto-injection into task/story/epic responses
+- **Memory Dashboard**: Web UI for managing project memories with scope/category filters and importance indicators
+- **Project Deletion**: Cascade-delete projects with all associated data via HTTP API and UI
 
 ## Quick Start
 
@@ -85,7 +88,7 @@ prozig/
 │   ├── error.zig              # Centralized error codes
 │   ├── db/
 │   │   ├── connection.zig     # SQLite connection wrapper + migrations
-│   │   ├── schema.zig         # Schema migrations (v1–v5)
+│   │   ├── schema.zig         # Schema migrations (v1–v7)
 │   │   ├── seed.zig           # Auto-seed workflow states, roles, permissions
 │   │   ├── test_helpers.zig   # Test database setup helpers
 │   │   └── queries/           # CRUD queries per entity
@@ -98,7 +101,8 @@ prozig/
 │   │       ├── agents.zig
 │   │       ├── wiki.zig
 │   │       ├── comments.zig
-│   │       └── dependencies.zig
+│   │       ├── dependencies.zig
+│   │       └── memory.zig
 │   ├── domain/
 │   │   ├── entities.zig       # Entity structs + UUID generation
 │   │   ├── lifecycle.zig      # State machine validation per entity
@@ -113,10 +117,11 @@ prozig/
 │   │   ├── transition.zig     # Entity state transitions
 │   │   ├── workflow.zig       # Workflow designer, roles, permissions
 │   │   ├── dashboard.zig      # Dashboard statistics
-│   │   └── assignment.zig     # Agent assignment suggestions
+│   │   ├── assignment.zig     # Agent assignment suggestions
+│   │   └── memory.zig         # Memory service (save, retrieve, cap enforcement)
 │   ├── mcp/
 │   │   ├── server.zig         # JSON-RPC 2.0 server over stdio
-│   │   ├── types.zig          # Server struct + tool routing + 39 tool definitions
+│   │   ├── types.zig          # Server struct + tool routing + 45 tool definitions
 │   │   ├── json.zig           # Custom JSON parser (Zig 0.16.0 compatible)
 │   │   └── tools/             # MCP tool handlers
 │   │       ├── project.zig
@@ -131,12 +136,13 @@ prozig/
 │   │       ├── query.zig
 │   │       ├── dashboard.zig
 │   │       ├── config.zig
-│   │       └── comments.zig
+│   │       ├── comments.zig
+│   │       └── memory.zig
 │   ├── http/
 │   │   └── server.zig         # HTTP server + REST API + static file serving
 │   ├── ui/
 │   │   ├── index.html         # SPA shell
-│   │   ├── app.js             # Full SPA (Dashboard, Board, Wiki, Roles, Workflow, Agents)
+│   │   ├── app.js             # Full SPA (Dashboard, Board, Wiki, Roles, Workflow, Agents, Memories)
 │   │   └── styles.css         # Dark theme styles
 │   ├── test_mcp_server.zig    # MCP server integration tests
 │   └── test_root.zig          # Test root module
@@ -304,6 +310,16 @@ All 39 tools, grouped by category:
 |------|-------------|
 | `get_dashboard` | Get project dashboard with all counts |
 
+#### Memory
+| Tool | Description |
+|------|-------------|
+| `memory_save` | Save a memory entry (decision, pattern, blocker, outcome, note, learning) |
+| `memory_get` | Retrieve memories for a project/entity with filters |
+| `memory_list` | List memories with scope/category filters |
+| `memory_delete` | Delete a memory entry |
+| `memory_update` | Update a memory entry |
+| `update_project_summary` | Update the running project summary (narrative + bullets) |
+
 ### Example MCP Call
 
 ```json
@@ -333,6 +349,7 @@ The HTTP dashboard exposes a full REST API:
 | GET | `/api/projects` | List all projects |
 | GET | `/api/projects/:id` | Get project by ID |
 | POST | `/api/projects` | Create project |
+| DELETE | `/api/projects/:id` | Delete project (cascade all data) |
 
 ### Epics
 
@@ -427,6 +444,15 @@ The HTTP dashboard exposes a full REST API:
 | POST | `/api/agents` | Register an agent |
 | PUT | `/api/agents/:id` | Update agent profile |
 
+### Memories
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/memories` | List memories (with optional scope/category filters) |
+| POST | `/api/memories` | Save a memory entry |
+| PUT | `/api/memories/:id` | Update a memory entry |
+| DELETE | `/api/memories/:id` | Delete a memory entry |
+
 ### Other
 
 | Method | Endpoint | Description |
@@ -465,7 +491,7 @@ Invalid transitions are rejected with an error.
 
 - **Location**: `~/.prozig/tracker.db`
 - **Engine**: SQLite3 with WAL mode
-- **Migrations**: Auto-applied on first run (current schema: v5)
+- **Migrations**: Auto-applied on first run (current schema: v7)
 - **Foreign Keys**: Enforced (parent must exist before child)
 
 ### Tables
@@ -488,6 +514,9 @@ Invalid transitions are rejected with an error.
 | `dependencies` | Blocker/blocked relationships between entities |
 | `wiki_pages` | Wiki documentation pages with category and hierarchy |
 | `wiki_history` | Version history snapshots for wiki pages |
+| `agent_memory` | Agent memory entries with BM25 full-text search (FTS5) |
+| `project_summaries` | Running project summaries (narrative + bullets) |
+| `memory_usage` | Memory usage tracking per project/role (cap enforcement) |
 
 ## CLI Commands
 

@@ -133,6 +133,30 @@ pub fn updatePartial(conn: *db.Connection, allocator: std.mem.Allocator, story_i
     _ = try stmt.step();
 }
 
+/// Delete a story and all its child data (tasks, subtasks).
+/// This function is designed to be called within a transaction.
+pub fn deleteWithChildren(conn: *db.Connection, story_id: i64) !void {
+    // Delete subtasks
+    var stmt = try conn.prepare(
+        \\DELETE FROM subtasks WHERE task_id IN (SELECT id FROM tasks WHERE story_id = ?)
+    );
+    defer stmt.finalize();
+    stmt.bindInt64(1, story_id);
+    _ = try stmt.step();
+
+    // Delete tasks
+    var delTasks = try conn.prepare("DELETE FROM tasks WHERE story_id = ?");
+    defer delTasks.finalize();
+    delTasks.bindInt64(1, story_id);
+    _ = try delTasks.step();
+
+    // Delete story
+    var delStory = try conn.prepare("DELETE FROM stories WHERE id = ?");
+    defer delStory.finalize();
+    delStory.bindInt64(1, story_id);
+    _ = try delStory.step();
+}
+
 const testing = std.testing;
 const test_helpers = @import("../test_helpers.zig");
 

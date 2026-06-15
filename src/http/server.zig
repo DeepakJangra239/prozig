@@ -3,6 +3,8 @@ const db = @import("../db/connection.zig");
 const svc = @import("../service/root.zig");
 const transition_svc = @import("../service/transition.zig");
 const dashboard_svc = @import("../service/dashboard.zig");
+const entities_svc = @import("../service/entities.zig");
+const project_svc = @import("../service/project.zig");
 const queries_project = @import("../db/queries/projects.zig");
 const queries_epic = @import("../db/queries/epics.zig");
 const queries_story = @import("../db/queries/stories.zig");
@@ -217,7 +219,7 @@ fn handleTransition(conn: *db.Connection, alloc: std.mem.Allocator, method: std.
         if (err == error.NotFound) return errJson(alloc, "not_found");
         return errJson(alloc, @errorName(err));
     };
-    return alloc.dupe(u8, "{{\"success\":true}}");
+    return alloc.dupe(u8, "{\"success\":true}");
 }
 
 fn handleApi(conn: *db.Connection, alloc: std.mem.Allocator, method: std.http.Method, path: []const u8, body: ?[]u8) ![]u8 {
@@ -259,6 +261,7 @@ fn handleApi(conn: *db.Connection, alloc: std.mem.Allocator, method: std.http.Me
     if (std.mem.eql(u8, resource, "comments")) return handleCommentsApi(conn, alloc, method, &it, body);
     if (std.mem.eql(u8, resource, "dashboard")) return handleDashboardApi(conn, alloc, method, path, body);
     if (std.mem.eql(u8, resource, "memories")) return handleMemoriesApi(conn, alloc, method, &it, body);
+    if (std.mem.eql(u8, resource, "config")) return handleConfigApi(conn, alloc, method, &it, body);
     if (std.mem.eql(u8, resource, "health")) return alloc.dupe(u8, "{\"status\":\"ok\"}");
     return error.NotFound;
 }
@@ -290,15 +293,30 @@ fn handleProjectsList(conn: *db.Connection, alloc: std.mem.Allocator, method: st
 
 fn handleProjectById(conn: *db.Connection, alloc: std.mem.Allocator, method: std.http.Method, project_id_str: []const u8, body: ?[]u8) ![]u8 {
     _ = body;
-    if (method != .GET) return errJson(alloc, "method_not_allowed");
     const project_id = parseId(project_id_str) catch return errJson(alloc, "invalid_id");
-    const project = queries_project.getById(conn, alloc, project_id) catch |err| return errJson(alloc, @errorName(err));
-    if (project) |p| {
-        defer freeProject(alloc, p);
-        return std.fmt.allocPrint(alloc, \\{{"id":{d},"name":"{s}","root_path":"{s}","description":{s}}}
-        , .{ p.id, p.name, p.root_path, if (p.description) |d| try std.fmt.allocPrint(alloc, "\"{s}\"", .{d}) else "null" });
+    if (method == .GET) {
+        const project = queries_project.getById(conn, alloc, project_id) catch |err| return errJson(alloc, @errorName(err));
+        if (project) |p| {
+            defer freeProject(alloc, p);
+            return std.fmt.allocPrint(alloc, \\{{"id":{d},"name":"{s}","root_path":"{s}","description":{s}}}
+            , .{ p.id, p.name, p.root_path, if (p.description) |d| try std.fmt.allocPrint(alloc, "\"{s}\"", .{d}) else "null" });
+        }
+        return errJson(alloc, "not_found");
     }
-    return errJson(alloc, "not_found");
+    if (method == .DELETE) {
+        conn.begin() catch |err| return errJson(alloc, @errorName(err));
+        errdefer conn.rollback();
+        queries_project.delete(conn, project_id) catch |err| {
+            conn.rollback();
+            return errJson(alloc, @errorName(err));
+        };
+        conn.commit() catch |err| {
+            conn.rollback();
+            return errJson(alloc, @errorName(err));
+        };
+        return alloc.dupe(u8, "{\"success\":true}");
+    }
+    return errJson(alloc, "method_not_allowed");
 }
 
 const AllocatedProject = struct { name: []const u8, root_path: []const u8, description: ?[]const u8 = null };
@@ -594,45 +612,62 @@ fn handleEpicsApi(conn: *db.Connection, alloc: std.mem.Allocator, method: std.ht
     if (sub != null and std.mem.eql(u8, sub.?, "transition")) {
         return handleTransition(conn, alloc, method, "epic", id.?, body);
     }
-    if (method == .GET) {
-        if (id) |epic_id| {
-            const epic = queries_epic.getById(conn, alloc, epic_id) catch |err| return errJson(alloc, @errorName(err));
-            if (epic) |e| {
-                defer freeEpic(alloc, e);
-                const desc_field = try jsonFieldIf(alloc, "description", e.description);
-                defer alloc.free(desc_field);
-                const ts_field = try jsonTimestamps(alloc, e.created_at, e.updated_at);
-                defer alloc.free(ts_field);
-                const assign_field = try jsonOptInt(alloc, "assignee_agent_id", e.assignee_agent_id);
-                defer alloc.free(assign_field);
-                const comments_field = try jsonComments(alloc, conn, "epic", epic_id);
-                defer alloc.free(comments_field);
-                return std.fmt.allocPrint(alloc, \\{{"id":{d},"project_id":{d},"title":"{s}","status":"{s}"{s}{s}{s}{s}}}
-                , .{ e.id, e.project_id, e.title, lifecycle.epicStatusToDb(e.status), desc_field, ts_field, assign_field, comments_field });
+
+    var service = svc.init(conn);
+
+    switch (method) {
+        .GET => {
+            if (id) |epic_id| {
+                const epic = queries_epic.getById(conn, alloc, epic_id) catch |err| return errJson(alloc, @errorName(err));
+                if (epic) |e| {
+                    defer freeEpic(alloc, e);
+                    const desc_field = try jsonFieldIf(alloc, "description", e.description);
+                    defer alloc.free(desc_field);
+                    const ts_field = try jsonTimestamps(alloc, e.created_at, e.updated_at);
+                    defer alloc.free(ts_field);
+                    const assign_field = try jsonOptInt(alloc, "assignee_agent_id", e.assignee_agent_id);
+                    defer alloc.free(assign_field);
+                    const comments_field = try jsonComments(alloc, conn, "epic", epic_id);
+                    defer alloc.free(comments_field);
+                    return std.fmt.allocPrint(alloc, \\{{"id":{d},"project_id":{d},"title":"{s}","status":"{s}"{s}{s}{s}{s}}}
+                    , .{ e.id, e.project_id, e.title, lifecycle.epicStatusToDb(e.status), desc_field, ts_field, assign_field, comments_field });
+                }
+                return errJson(alloc, "not_found");
             }
-            return errJson(alloc, "not_found");
-        }
+            return errJson(alloc, "missing_id");
+        },
+        .POST => {
+            const body_str = body orelse return errJson(alloc, "missing_body");
+            const parsed = std.json.parseFromSliceLeaky(AllocatedEpic, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
+            validation.validateEpic(parsed.project_id, parsed.title, parsed.description orelse "") catch |err| return errJson(alloc, @errorName(err));
+            const epic = queries_epic.insert(conn, alloc, parsed.project_id, parsed.title, parsed.description, null) catch |err| {
+                if (err == error.ConstraintViolation) return errFk(alloc, "project");
+                return errJson(alloc, @errorName(err));
+            };
+            defer freeEpic(alloc, epic);
+            return std.fmt.allocPrint(alloc, \\{{"id":{d},"title":"{s}","status":"Backlog"}}
+            , .{ epic.id, epic.title });
+        },
+        .PUT => {
+            if (id == null) return errJson(alloc, "missing_id");
+            const body_str = body orelse return errJson(alloc, "missing_body");
+            const parsed = std.json.parseFromSliceLeaky(EpicUpdatePayload, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
+            entities_svc.updateEpic(&service, alloc, id.?, parsed.title, parsed.description) catch |err| {
+                if (err == error.NoFieldsToUpdate) return errJson(alloc, "no_fields_to_update");
+                return errJson(alloc, @errorName(err));
+            };
+            return alloc.dupe(u8, "{\"success\":true}");
+        },
+        .DELETE => {
+            if (id == null) return errJson(alloc, "missing_id");
+            entities_svc.deleteEpicWithChildren(&service, id.?) catch |err| return errJson(alloc, @errorName(err));
+            return alloc.dupe(u8, "{\"success\":true}");
+        },
+        else => return errJson(alloc, "method_not_allowed"),
     }
-    if (method == .POST) {
-        const body_str = body orelse return errJson(alloc, "missing_body");
-        const parsed = std.json.parseFromSliceLeaky(AllocatedEpic, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
-        validation.validateEpic(parsed.project_id, parsed.title, parsed.description orelse "") catch |err| return errJson(alloc, @errorName(err));
-        const epic = queries_epic.insert(conn, alloc, parsed.project_id, parsed.title, parsed.description, null) catch |err| {
-            if (err == error.ConstraintViolation) return errFk(alloc, "project");
-            return errJson(alloc, @errorName(err));
-        };
-        defer freeEpic(alloc, epic);
-        return std.fmt.allocPrint(alloc, \\{{"id":{d},"title":"{s}","status":"Backlog"}}
-        , .{ epic.id, epic.title });
-    }
-    if (method == .DELETE) {
-        if (id) |epic_id| {
-            queries_epic.delete(conn, epic_id) catch |err| return errJson(alloc, @errorName(err));
-            return alloc.dupe(u8, "{{\"success\":true}}");
-        }
-    }
-    return errJson(alloc, "method_not_allowed");
 }
+
+const EpicUpdatePayload = struct { title: ?[]const u8 = null, description: ?[]const u8 = null };
 
 fn handleEpicsByProject(conn: *db.Connection, alloc: std.mem.Allocator, method: std.http.Method, project_id_str: []const u8, body: ?[]u8) ![]u8 {
     _ = body;
@@ -671,47 +706,64 @@ fn handleStoriesApi(conn: *db.Connection, alloc: std.mem.Allocator, method: std.
     if (sub != null and std.mem.eql(u8, sub.?, "transition")) {
         return handleTransition(conn, alloc, method, "story", id.?, body);
     }
-    if (method == .GET) {
-        if (id) |story_id| {
-            const story = queries_story.getById(conn, alloc, story_id) catch |err| return errJson(alloc, @errorName(err));
-            if (story) |s| {
-                defer freeStory(alloc, s);
-                const desc_field = try jsonFieldIf(alloc, "description", s.description);
-                defer alloc.free(desc_field);
-                const ac_field = try jsonFieldIf(alloc, "acceptance_criteria", s.acceptance_criteria);
-                defer alloc.free(ac_field);
-                const ts_field = try jsonTimestamps(alloc, s.created_at, s.updated_at);
-                defer alloc.free(ts_field);
-                const assign_field = try jsonOptInt(alloc, "assignee_agent_id", s.assignee_agent_id);
-                defer alloc.free(assign_field);
-                const comments_field = try jsonComments(alloc, conn, "story", story_id);
-                defer alloc.free(comments_field);
-                return std.fmt.allocPrint(alloc, \\{{"id":{d},"epic_id":{d},"title":"{s}","status":"{s}"{s}{s}{s}{s}{s}}}
-                , .{ s.id, s.epic_id, s.title, lifecycle.storyStatusToDb(s.status), desc_field, ac_field, ts_field, assign_field, comments_field });
+
+    var service = svc.init(conn);
+
+    switch (method) {
+        .GET => {
+            if (id) |story_id| {
+                const story = queries_story.getById(conn, alloc, story_id) catch |err| return errJson(alloc, @errorName(err));
+                if (story) |s| {
+                    defer freeStory(alloc, s);
+                    const desc_field = try jsonFieldIf(alloc, "description", s.description);
+                    defer alloc.free(desc_field);
+                    const ac_field = try jsonFieldIf(alloc, "acceptance_criteria", s.acceptance_criteria);
+                    defer alloc.free(ac_field);
+                    const ts_field = try jsonTimestamps(alloc, s.created_at, s.updated_at);
+                    defer alloc.free(ts_field);
+                    const assign_field = try jsonOptInt(alloc, "assignee_agent_id", s.assignee_agent_id);
+                    defer alloc.free(assign_field);
+                    const comments_field = try jsonComments(alloc, conn, "story", story_id);
+                    defer alloc.free(comments_field);
+                    return std.fmt.allocPrint(alloc, \\{{"id":{d},"epic_id":{d},"title":"{s}","status":"{s}"{s}{s}{s}{s}{s}}}
+                    , .{ s.id, s.epic_id, s.title, lifecycle.storyStatusToDb(s.status), desc_field, ac_field, ts_field, assign_field, comments_field });
+                }
+                return errJson(alloc, "not_found");
             }
-            return errJson(alloc, "not_found");
-        }
+            return errJson(alloc, "missing_id");
+        },
+        .POST => {
+            const body_str = body orelse return errJson(alloc, "missing_body");
+            const parsed = std.json.parseFromSliceLeaky(AllocatedStory, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
+            validation.validateStory(parsed.project_id, parsed.epic_id, parsed.title, parsed.description orelse "", parsed.acceptance_criteria orelse "") catch |err| return errJson(alloc, @errorName(err));
+            const story = queries_story.insert(conn, alloc, parsed.project_id, parsed.epic_id, parsed.title, parsed.description, parsed.acceptance_criteria) catch |err| {
+                if (err == error.ConstraintViolation) return errFk(alloc, "epic");
+                return errJson(alloc, @errorName(err));
+            };
+            defer freeStory(alloc, story);
+            return std.fmt.allocPrint(alloc, \\{{"id":{d},"title":"{s}","status":"Backlog"}}
+            , .{ story.id, story.title });
+        },
+        .PUT => {
+            if (id == null) return errJson(alloc, "missing_id");
+            const body_str = body orelse return errJson(alloc, "missing_body");
+            const parsed = std.json.parseFromSliceLeaky(StoryUpdatePayload, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
+            entities_svc.updateStory(&service, alloc, id.?, parsed.title, parsed.description, parsed.acceptance_criteria) catch |err| {
+                if (err == error.NoFieldsToUpdate) return errJson(alloc, "no_fields_to_update");
+                return errJson(alloc, @errorName(err));
+            };
+            return alloc.dupe(u8, "{\"success\":true}");
+        },
+        .DELETE => {
+            if (id == null) return errJson(alloc, "missing_id");
+            entities_svc.deleteStoryWithChildren(&service, id.?) catch |err| return errJson(alloc, @errorName(err));
+            return alloc.dupe(u8, "{\"success\":true}");
+        },
+        else => return errJson(alloc, "method_not_allowed"),
     }
-    if (method == .POST) {
-        const body_str = body orelse return errJson(alloc, "missing_body");
-        const parsed = std.json.parseFromSliceLeaky(AllocatedStory, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
-        validation.validateStory(parsed.project_id, parsed.epic_id, parsed.title, parsed.description orelse "", parsed.acceptance_criteria orelse "") catch |err| return errJson(alloc, @errorName(err));
-        const story = queries_story.insert(conn, alloc, parsed.project_id, parsed.epic_id, parsed.title, parsed.description, parsed.acceptance_criteria) catch |err| {
-            if (err == error.ConstraintViolation) return errFk(alloc, "epic");
-            return errJson(alloc, @errorName(err));
-        };
-        defer freeStory(alloc, story);
-        return std.fmt.allocPrint(alloc, \\{{"id":{d},"title":"{s}","status":"Backlog"}}
-        , .{ story.id, story.title });
-    }
-    if (method == .DELETE) {
-        if (id) |story_id| {
-            queries_story.delete(conn, story_id) catch |err| return errJson(alloc, @errorName(err));
-            return alloc.dupe(u8, "{{\"success\":true}}");
-        }
-    }
-    return errJson(alloc, "method_not_allowed");
 }
+
+const StoryUpdatePayload = struct { title: ?[]const u8 = null, description: ?[]const u8 = null, acceptance_criteria: ?[]const u8 = null };
 
 fn handleStoriesByProject(conn: *db.Connection, alloc: std.mem.Allocator, method: std.http.Method, project_id_str: []const u8, body: ?[]u8) ![]u8 {
     _ = body;
@@ -758,45 +810,62 @@ fn handleTasksApi(conn: *db.Connection, alloc: std.mem.Allocator, method: std.ht
     if (sub != null and std.mem.eql(u8, sub.?, "transition")) {
         return handleTransition(conn, alloc, method, "task", id.?, body);
     }
-    if (method == .GET) {
-        if (id) |task_id| {
-            const task = queries_task.getById(conn, alloc, task_id) catch |err| return errJson(alloc, @errorName(err));
-            if (task) |t| {
-                defer freeTask(alloc, t);
-                const desc_field = try jsonFieldIf(alloc, "description", t.description);
-                defer alloc.free(desc_field);
-                const ts_field = try jsonTimestamps(alloc, t.created_at, t.updated_at);
-                defer alloc.free(ts_field);
-                const assign_field = try jsonOptInt(alloc, "assignee_agent_id", t.assignee_agent_id);
-                defer alloc.free(assign_field);
-                const comments_field = try jsonComments(alloc, conn, "task", task_id);
-                defer alloc.free(comments_field);
-                return std.fmt.allocPrint(alloc, \\{{"id":{d},"story_id":{d},"title":"{s}","status":"{s}"{s}{s}{s}{s}}}
-                , .{ t.id, t.story_id, t.title, lifecycle.taskStatusToDb(t.status), desc_field, ts_field, assign_field, comments_field });
+
+    var service = svc.init(conn);
+
+    switch (method) {
+        .GET => {
+            if (id) |task_id| {
+                const task = queries_task.getById(conn, alloc, task_id) catch |err| return errJson(alloc, @errorName(err));
+                if (task) |t| {
+                    defer freeTask(alloc, t);
+                    const desc_field = try jsonFieldIf(alloc, "description", t.description);
+                    defer alloc.free(desc_field);
+                    const ts_field = try jsonTimestamps(alloc, t.created_at, t.updated_at);
+                    defer alloc.free(ts_field);
+                    const assign_field = try jsonOptInt(alloc, "assignee_agent_id", t.assignee_agent_id);
+                    defer alloc.free(assign_field);
+                    const comments_field = try jsonComments(alloc, conn, "task", task_id);
+                    defer alloc.free(comments_field);
+                    return std.fmt.allocPrint(alloc, \\{{"id":{d},"story_id":{d},"title":"{s}","status":"{s}"{s}{s}{s}{s}}}
+                    , .{ t.id, t.story_id, t.title, lifecycle.taskStatusToDb(t.status), desc_field, ts_field, assign_field, comments_field });
+                }
+                return errJson(alloc, "not_found");
             }
-            return errJson(alloc, "not_found");
-        }
+            return errJson(alloc, "missing_id");
+        },
+        .POST => {
+            const body_str = body orelse return errJson(alloc, "missing_body");
+            const parsed = std.json.parseFromSliceLeaky(AllocatedTask, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
+            validation.validateTask(parsed.project_id, parsed.story_id, parsed.title, parsed.description orelse "") catch |err| return errJson(alloc, @errorName(err));
+            const task = queries_task.insert(conn, alloc, parsed.project_id, parsed.story_id, parsed.title, parsed.description) catch |err| {
+                if (err == error.ConstraintViolation) return errFk(alloc, "story");
+                return errJson(alloc, @errorName(err));
+            };
+            defer freeTask(alloc, task);
+            return std.fmt.allocPrint(alloc, \\{{"id":{d},"title":"{s}","status":"Todo"}}
+            , .{ task.id, task.title });
+        },
+        .PUT => {
+            if (id == null) return errJson(alloc, "missing_id");
+            const body_str = body orelse return errJson(alloc, "missing_body");
+            const parsed = std.json.parseFromSliceLeaky(TaskUpdatePayload, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
+            entities_svc.updateTask(&service, alloc, id.?, parsed.title, parsed.description) catch |err| {
+                if (err == error.NoFieldsToUpdate) return errJson(alloc, "no_fields_to_update");
+                return errJson(alloc, @errorName(err));
+            };
+            return alloc.dupe(u8, "{\"success\":true}");
+        },
+        .DELETE => {
+            if (id == null) return errJson(alloc, "missing_id");
+            entities_svc.deleteTaskWithChildren(&service, id.?) catch |err| return errJson(alloc, @errorName(err));
+            return alloc.dupe(u8, "{\"success\":true}");
+        },
+        else => return errJson(alloc, "method_not_allowed"),
     }
-    if (method == .POST) {
-        const body_str = body orelse return errJson(alloc, "missing_body");
-        const parsed = std.json.parseFromSliceLeaky(AllocatedTask, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
-        validation.validateTask(parsed.project_id, parsed.story_id, parsed.title, parsed.description orelse "") catch |err| return errJson(alloc, @errorName(err));
-        const task = queries_task.insert(conn, alloc, parsed.project_id, parsed.story_id, parsed.title, parsed.description) catch |err| {
-            if (err == error.ConstraintViolation) return errFk(alloc, "story");
-            return errJson(alloc, @errorName(err));
-        };
-        defer freeTask(alloc, task);
-        return std.fmt.allocPrint(alloc, \\{{"id":{d},"title":"{s}","status":"Todo"}}
-        , .{ task.id, task.title });
-    }
-    if (method == .DELETE) {
-        if (id) |task_id| {
-            queries_task.delete(conn, task_id) catch |err| return errJson(alloc, @errorName(err));
-            return alloc.dupe(u8, "{{\"success\":true}}");
-        }
-    }
-    return errJson(alloc, "method_not_allowed");
 }
+
+const TaskUpdatePayload = struct { title: ?[]const u8 = null, description: ?[]const u8 = null };
 
 fn handleTasksByProject(conn: *db.Connection, alloc: std.mem.Allocator, method: std.http.Method, project_id_str: []const u8, body: ?[]u8) ![]u8 {
     _ = body;
@@ -847,45 +916,62 @@ fn handleSubtasksApi(conn: *db.Connection, alloc: std.mem.Allocator, method: std
     if (sub != null and std.mem.eql(u8, sub.?, "transition")) {
         return handleTransition(conn, alloc, method, "subtask", id.?, body);
     }
-    if (method == .GET) {
-        if (id) |subtask_id| {
-            const subtask = queries_subtask.getById(conn, alloc, subtask_id) catch |err| return errJson(alloc, @errorName(err));
-            if (subtask) |st| {
-                defer freeSubtask(alloc, st);
-                const desc_field = try jsonFieldIf(alloc, "description", st.description);
-                defer alloc.free(desc_field);
-                const ts_field = try jsonTimestamps(alloc, st.created_at, st.updated_at);
-                defer alloc.free(ts_field);
-                const assign_field = try jsonOptInt(alloc, "assignee_agent_id", st.assignee_agent_id);
-                defer alloc.free(assign_field);
-                const comments_field = try jsonComments(alloc, conn, "subtask", subtask_id);
-                defer alloc.free(comments_field);
-                return std.fmt.allocPrint(alloc, \\{{"id":{d},"task_id":{d},"title":"{s}","status":"{s}"{s}{s}{s}{s}}}
-                , .{ st.id, st.task_id, st.title, lifecycle.subTaskStatusToDb(st.status), desc_field, ts_field, assign_field, comments_field });
+
+    var service = svc.init(conn);
+
+    switch (method) {
+        .GET => {
+            if (id) |subtask_id| {
+                const subtask = queries_subtask.getById(conn, alloc, subtask_id) catch |err| return errJson(alloc, @errorName(err));
+                if (subtask) |st| {
+                    defer freeSubtask(alloc, st);
+                    const desc_field = try jsonFieldIf(alloc, "description", st.description);
+                    defer alloc.free(desc_field);
+                    const ts_field = try jsonTimestamps(alloc, st.created_at, st.updated_at);
+                    defer alloc.free(ts_field);
+                    const assign_field = try jsonOptInt(alloc, "assignee_agent_id", st.assignee_agent_id);
+                    defer alloc.free(assign_field);
+                    const comments_field = try jsonComments(alloc, conn, "subtask", subtask_id);
+                    defer alloc.free(comments_field);
+                    return std.fmt.allocPrint(alloc, \\{{"id":{d},"task_id":{d},"title":"{s}","status":"{s}"{s}{s}{s}{s}}}
+                    , .{ st.id, st.task_id, st.title, lifecycle.subTaskStatusToDb(st.status), desc_field, ts_field, assign_field, comments_field });
+                }
+                return errJson(alloc, "not_found");
             }
-            return errJson(alloc, "not_found");
-        }
+            return errJson(alloc, "missing_id");
+        },
+        .POST => {
+            const body_str = body orelse return errJson(alloc, "missing_body");
+            const parsed = std.json.parseFromSliceLeaky(AllocatedSubtask, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
+            validation.validateSubTask(parsed.project_id, parsed.task_id, parsed.title, parsed.description orelse "") catch |err| return errJson(alloc, @errorName(err));
+            const subtask = queries_subtask.insert(conn, alloc, parsed.project_id, parsed.task_id, parsed.title, parsed.description) catch |err| {
+                if (err == error.ConstraintViolation) return errFk(alloc, "task");
+                return errJson(alloc, @errorName(err));
+            };
+            defer freeSubtask(alloc, subtask);
+            return std.fmt.allocPrint(alloc, \\{{"id":{d},"title":"{s}","status":"Todo"}}
+            , .{ subtask.id, subtask.title });
+        },
+        .PUT => {
+            if (id == null) return errJson(alloc, "missing_id");
+            const body_str = body orelse return errJson(alloc, "missing_body");
+            const parsed = std.json.parseFromSliceLeaky(SubtaskUpdatePayload, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
+            entities_svc.updateSubtask(&service, alloc, id.?, parsed.title, parsed.description) catch |err| {
+                if (err == error.NoFieldsToUpdate) return errJson(alloc, "no_fields_to_update");
+                return errJson(alloc, @errorName(err));
+            };
+            return alloc.dupe(u8, "{\"success\":true}");
+        },
+        .DELETE => {
+            if (id == null) return errJson(alloc, "missing_id");
+            queries_subtask.delete(conn, id.?) catch |err| return errJson(alloc, @errorName(err));
+            return alloc.dupe(u8, "{\"success\":true}");
+        },
+        else => return errJson(alloc, "method_not_allowed"),
     }
-    if (method == .POST) {
-        const body_str = body orelse return errJson(alloc, "missing_body");
-        const parsed = std.json.parseFromSliceLeaky(AllocatedSubtask, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
-        validation.validateSubTask(parsed.project_id, parsed.task_id, parsed.title, parsed.description orelse "") catch |err| return errJson(alloc, @errorName(err));
-        const subtask = queries_subtask.insert(conn, alloc, parsed.project_id, parsed.task_id, parsed.title, parsed.description) catch |err| {
-            if (err == error.ConstraintViolation) return errFk(alloc, "task");
-            return errJson(alloc, @errorName(err));
-        };
-        defer freeSubtask(alloc, subtask);
-        return std.fmt.allocPrint(alloc, \\{{"id":{d},"title":"{s}","status":"Todo"}}
-        , .{ subtask.id, subtask.title });
-    }
-    if (method == .DELETE) {
-        if (id) |subtask_id| {
-            queries_subtask.delete(conn, subtask_id) catch |err| return errJson(alloc, @errorName(err));
-            return alloc.dupe(u8, "{{\"success\":true}}");
-        }
-    }
-    return errJson(alloc, "method_not_allowed");
 }
+
+const SubtaskUpdatePayload = struct { title: ?[]const u8 = null, description: ?[]const u8 = null };
 
 const AllocatedSubtask = struct { project_id: i64, task_id: i64, title: []const u8, description: ?[]const u8 = null };
 
@@ -905,45 +991,62 @@ fn handleBugsApi(conn: *db.Connection, alloc: std.mem.Allocator, method: std.htt
     if (sub != null and std.mem.eql(u8, sub.?, "transition")) {
         return handleTransition(conn, alloc, method, "bug", id.?, body);
     }
-    if (method == .GET) {
-        if (id) |bug_id| {
-            const bug = queries_bug.getById(conn, alloc, bug_id) catch |err| return errJson(alloc, @errorName(err));
-            if (bug) |b| {
-                defer entities.freeBug(alloc, b);
-                const desc_field = try jsonFieldIf(alloc, "description", b.description);
-                defer alloc.free(desc_field);
-                const ts_field = try jsonTimestamps(alloc, b.created_at, b.updated_at);
-                defer alloc.free(ts_field);
-                const assign_field = try jsonOptInt(alloc, "assignee_agent_id", b.assignee_agent_id);
-                defer alloc.free(assign_field);
-                const comments_field = try jsonComments(alloc, conn, "bug", bug_id);
-                defer alloc.free(comments_field);
-                return std.fmt.allocPrint(alloc, \\{{"id":{d},"title":"{s}","severity":"{s}","status":"{s}"{s}{s}{s}{s}}}
-                , .{ b.id, b.title, b.severity, lifecycle.bugStatusToDb(b.status), desc_field, ts_field, assign_field, comments_field });
+
+    var service = svc.init(conn);
+
+    switch (method) {
+        .GET => {
+            if (id) |bug_id| {
+                const bug = queries_bug.getById(conn, alloc, bug_id) catch |err| return errJson(alloc, @errorName(err));
+                if (bug) |b| {
+                    defer entities.freeBug(alloc, b);
+                    const desc_field = try jsonFieldIf(alloc, "description", b.description);
+                    defer alloc.free(desc_field);
+                    const ts_field = try jsonTimestamps(alloc, b.created_at, b.updated_at);
+                    defer alloc.free(ts_field);
+                    const assign_field = try jsonOptInt(alloc, "assignee_agent_id", b.assignee_agent_id);
+                    defer alloc.free(assign_field);
+                    const comments_field = try jsonComments(alloc, conn, "bug", bug_id);
+                    defer alloc.free(comments_field);
+                    return std.fmt.allocPrint(alloc, \\{{"id":{d},"title":"{s}","severity":"{s}","status":"{s}"{s}{s}{s}{s}}}
+                    , .{ b.id, b.title, b.severity, lifecycle.bugStatusToDb(b.status), desc_field, ts_field, assign_field, comments_field });
+                }
+                return errJson(alloc, "not_found");
             }
-            return errJson(alloc, "not_found");
-        }
+            return errJson(alloc, "missing_id");
+        },
+        .POST => {
+            const body_str = body orelse return errJson(alloc, "missing_body");
+            const parsed = std.json.parseFromSliceLeaky(AllocatedBug, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
+            validation.validateBug(parsed.project_id, parsed.title, parsed.description orelse "", parsed.severity) catch |err| return errJson(alloc, @errorName(err));
+            const bug = queries_bug.insert(conn, alloc, parsed.project_id, parsed.title, parsed.description, parsed.severity, parsed.epic_id, parsed.story_id, parsed.task_id) catch |err| {
+                if (err == error.ConstraintViolation) return errFk(alloc, "project/epic/story/task");
+                return errJson(alloc, @errorName(err));
+            };
+            defer entities.freeBug(alloc, bug);
+            return std.fmt.allocPrint(alloc, \\{{"id":{d},"title":"{s}","severity":"{s}","status":"New"}}
+            , .{ bug.id, bug.title, bug.severity });
+        },
+        .PUT => {
+            if (id == null) return errJson(alloc, "missing_id");
+            const body_str = body orelse return errJson(alloc, "missing_body");
+            const parsed = std.json.parseFromSliceLeaky(BugUpdatePayload, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
+            entities_svc.updateBug(&service, alloc, id.?, parsed.title, parsed.description, parsed.severity) catch |err| {
+                if (err == error.NoFieldsToUpdate) return errJson(alloc, "no_fields_to_update");
+                return errJson(alloc, @errorName(err));
+            };
+            return alloc.dupe(u8, "{\"success\":true}");
+        },
+        .DELETE => {
+            if (id == null) return errJson(alloc, "missing_id");
+            queries_bug.delete(conn, id.?) catch |err| return errJson(alloc, @errorName(err));
+            return alloc.dupe(u8, "{\"success\":true}");
+        },
+        else => return errJson(alloc, "method_not_allowed"),
     }
-    if (method == .POST) {
-        const body_str = body orelse return errJson(alloc, "missing_body");
-        const parsed = std.json.parseFromSliceLeaky(AllocatedBug, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
-        validation.validateBug(parsed.project_id, parsed.title, parsed.description orelse "", parsed.severity) catch |err| return errJson(alloc, @errorName(err));
-        const bug = queries_bug.insert(conn, alloc, parsed.project_id, parsed.title, parsed.description, parsed.severity, parsed.epic_id, parsed.story_id, parsed.task_id) catch |err| {
-            if (err == error.ConstraintViolation) return errFk(alloc, "project/epic/story/task");
-            return errJson(alloc, @errorName(err));
-        };
-        defer entities.freeBug(alloc, bug);
-        return std.fmt.allocPrint(alloc, \\{{"id":{d},"title":"{s}","severity":"{s}","status":"New"}}
-        , .{ bug.id, bug.title, bug.severity });
-    }
-    if (method == .DELETE) {
-        if (id) |bug_id| {
-            queries_bug.delete(conn, bug_id) catch |err| return errJson(alloc, @errorName(err));
-            return alloc.dupe(u8, "{{\"success\":true}}");
-        }
-    }
-    return errJson(alloc, "method_not_allowed");
 }
+
+const BugUpdatePayload = struct { title: ?[]const u8 = null, description: ?[]const u8 = null, severity: ?[]const u8 = null };
 
 fn handleBugsByProject(conn: *db.Connection, alloc: std.mem.Allocator, method: std.http.Method, project_id_str: []const u8, body: ?[]u8) ![]u8 {
     _ = body;
@@ -992,46 +1095,56 @@ fn handleSubtasksByProject(conn: *db.Connection, alloc: std.mem.Allocator, metho
 fn handleWikiApi(conn: *db.Connection, alloc: std.mem.Allocator, method: std.http.Method, it: *std.mem.SplitIterator(u8, .scalar), body: ?[]u8) ![]u8 {
     const id_str = it.next();
     const id = if (id_str) |s| parseId(s) catch null else null;
-    if (method == .GET) {
-        if (id) |page_id| {
-            const page = queries_wiki.getById(conn, alloc, page_id) catch |err| return errJson(alloc, @errorName(err));
-            if (page) |p| {
-                defer freeWikiPage(alloc, p);
-                const esc_title = try jsonEscape(alloc, p.title);
-                defer alloc.free(esc_title);
-                const esc_category = try jsonEscape(alloc, p.category);
-                defer alloc.free(esc_category);
-                const esc_content = try jsonEscape(alloc, p.content);
-                defer alloc.free(esc_content);
-                const comments_field = try jsonComments(alloc, conn, "wiki", page_id);
-                defer alloc.free(comments_field);
-                return std.fmt.allocPrint(alloc, \\{{"id":{d},"title":"{s}","category":"{s}","content":"{s}","version":{d}{s}}}
-                , .{ p.id, esc_title, esc_category, esc_content, p.version, comments_field });
+
+    var service = svc.init(conn);
+
+    switch (method) {
+        .GET => {
+            if (id) |page_id| {
+                const page = queries_wiki.getById(conn, alloc, page_id) catch |err| return errJson(alloc, @errorName(err));
+                if (page) |p| {
+                    defer freeWikiPage(alloc, p);
+                    const esc_title = try jsonEscape(alloc, p.title);
+                    defer alloc.free(esc_title);
+                    const esc_category = try jsonEscape(alloc, p.category);
+                    defer alloc.free(esc_category);
+                    const esc_content = try jsonEscape(alloc, p.content);
+                    defer alloc.free(esc_content);
+                    const comments_field = try jsonComments(alloc, conn, "wiki", page_id);
+                    defer alloc.free(comments_field);
+                    return std.fmt.allocPrint(alloc, \\{{"id":{d},"title":"{s}","category":"{s}","content":"{s}","version":{d}{s}}}
+                    , .{ p.id, esc_title, esc_category, esc_content, p.version, comments_field });
+                }
+                return errJson(alloc, "not_found");
             }
-            return errJson(alloc, "not_found");
-        }
-    }
-    if (method == .POST) {
-        const body_str = body orelse return errJson(alloc, "missing_body");
-        const parsed = std.json.parseFromSliceLeaky(AllocatedWikiPage, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
-        validation.validateWikiPage(parsed.project_id, parsed.title, parsed.category, parsed.content) catch |err| return errJson(alloc, @errorName(err));
-        const page = queries_wiki.insert(conn, alloc, parsed.project_id, parsed.category, null, parsed.title, parsed.content) catch |err| {
-            if (err == error.ConstraintViolation) return errFk(alloc, "project");
-            return errJson(alloc, @errorName(err));
-        };
-        defer freeWikiPage(alloc, page);
-        return std.fmt.allocPrint(alloc, \\{{"id":{d},"title":"{s}"}}
-        , .{ page.id, page.title });
-    }
-    if (method == .PUT) {
-        if (id) |page_id| {
+            return errJson(alloc, "missing_id");
+        },
+        .POST => {
+            const body_str = body orelse return errJson(alloc, "missing_body");
+            const parsed = std.json.parseFromSliceLeaky(AllocatedWikiPage, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
+            validation.validateWikiPage(parsed.project_id, parsed.title, parsed.category, parsed.content) catch |err| return errJson(alloc, @errorName(err));
+            const page = queries_wiki.insert(conn, alloc, parsed.project_id, parsed.category, null, parsed.title, parsed.content) catch |err| {
+                if (err == error.ConstraintViolation) return errFk(alloc, "project");
+                return errJson(alloc, @errorName(err));
+            };
+            defer freeWikiPage(alloc, page);
+            return std.fmt.allocPrint(alloc, \\{{"id":{d},"title":"{s}"}}
+            , .{ page.id, page.title });
+        },
+        .PUT => {
+            if (id == null) return errJson(alloc, "missing_id");
             const body_str = body orelse return errJson(alloc, "missing_body");
             const parsed = std.json.parseFromSliceLeaky(UpdateWikiPage, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
-            queries_wiki.updateContent(conn, page_id, parsed.content) catch |err| return errJson(alloc, @errorName(err));
-            return alloc.dupe(u8, "{{\"success\":true}}");
-        }
+            queries_wiki.updateContent(conn, id.?, parsed.content) catch |err| return errJson(alloc, @errorName(err));
+            return alloc.dupe(u8, "{\"success\":true}");
+        },
+        .DELETE => {
+            if (id == null) return errJson(alloc, "missing_id");
+            entities_svc.deleteWiki(&service, id.?) catch |err| return errJson(alloc, @errorName(err));
+            return alloc.dupe(u8, "{\"success\":true}");
+        },
+        else => return errJson(alloc, "method_not_allowed"),
     }
-    return errJson(alloc, "method_not_allowed");
 }
 
 fn handleWikiByProject(conn: *db.Connection, alloc: std.mem.Allocator, method: std.http.Method, project_id_str: []const u8, body: ?[]u8) ![]u8 {
@@ -1069,76 +1182,87 @@ fn freeWikiPage(alloc: std.mem.Allocator, p: entities.WikiPage) void {
 fn handleAgentsApi(conn: *db.Connection, alloc: std.mem.Allocator, method: std.http.Method, it: *std.mem.SplitIterator(u8, .scalar), body: ?[]u8) ![]u8 {
     const id_str = it.next();
     const id = if (id_str) |s| parseId(s) catch null else null;
-    if (method == .GET) {
-        if (id) |agent_id| {
-            var stmt = try conn.prepare("SELECT a.id, a.name, a.capabilities, a.description, a.role_id, COALESCE(r.name,'') FROM agent_profiles a LEFT JOIN agent_roles r ON a.role_id = r.id WHERE a.id = ?");
+
+    var service = svc.init(conn);
+
+    switch (method) {
+        .GET => {
+            if (id) |agent_id| {
+                var stmt = try conn.prepare("SELECT a.id, a.name, a.capabilities, a.description, a.role_id, COALESCE(r.name,'') FROM agent_profiles a LEFT JOIN agent_roles r ON a.role_id = r.id WHERE a.id = ?");
+                defer stmt.finalize();
+                stmt.bindInt64(1, agent_id);
+                if (try stmt.step() == .row) {
+                    const name = stmt.columnText(1) orelse return errJson(alloc, "not_found");
+                    const capabilities = stmt.columnText(2) orelse return errJson(alloc, "not_found");
+                    const description = stmt.columnText(3) orelse "";
+                    const role_id = stmt.columnInt64Safe(4);
+                    const role_name = stmt.columnText(5) orelse "";
+                    return std.fmt.allocPrint(alloc, \\{{"id":{d},"name":"{s}","capabilities":"{s}","description":"{s}","role_id":{s},"role_name":"{s}"}}
+                    , .{ agent_id, name, capabilities, description, if (role_id) |r| std.fmt.allocPrint(alloc, "{d}", .{r}) catch "null" else "null", role_name });
+                }
+                return errJson(alloc, "not_found");
+            }
+            // List all agents
+            var stmt = try conn.prepare("SELECT a.id, a.name, a.capabilities, a.description, a.role_id, COALESCE(r.name,'') FROM agent_profiles a LEFT JOIN agent_roles r ON a.role_id = r.id ORDER BY a.name");
             defer stmt.finalize();
-            stmt.bindInt64(1, agent_id);
-            if (try stmt.step() == .row) {
-                const name = stmt.columnText(1) orelse return errJson(alloc, "not_found");
-                const capabilities = stmt.columnText(2) orelse return errJson(alloc, "not_found");
-                const description = stmt.columnText(3) orelse "";
+            var result = std.array_list.Managed(u8).init(alloc);
+            try result.appendSlice("[");
+            var first = true;
+            while (true) {
+                const row = stmt.step() catch break;
+                if (row != .row) break;
+                if (!first) try result.append(',');
+                first = false;
+                const agent_id = stmt.columnInt64(0);
+                const name = stmt.columnText(1) orelse "";
+                const capabilities = stmt.columnText(2) orelse "";
+                const description = stmt.columnText(3);
                 const role_id = stmt.columnInt64Safe(4);
                 const role_name = stmt.columnText(5) orelse "";
-                return std.fmt.allocPrint(alloc, \\{{"id":{d},"name":"{s}","capabilities":"{s}","description":"{s}","role_id":{s},"role_name":"{s}"}}
-                , .{ agent_id, name, capabilities, description, if (role_id) |r| std.fmt.allocPrint(alloc, "{d}", .{r}) catch "null" else "null", role_name });
+                const entry = try std.fmt.allocPrint(alloc, \\{{"id":{d},"name":"{s}","capabilities":"{s}","description":"{s}","role_id":{s},"role_name":"{s}"}}
+                , .{ agent_id, name, capabilities, description orelse "", if (role_id) |r| std.fmt.allocPrint(alloc, "{d}", .{r}) catch "null" else "null", role_name });
+                try result.appendSlice(entry);
+                alloc.free(entry);
             }
-            return errJson(alloc, "not_found");
-        }
-        // List all agents
-        var stmt = try conn.prepare("SELECT a.id, a.name, a.capabilities, a.description, a.role_id, COALESCE(r.name,'') FROM agent_profiles a LEFT JOIN agent_roles r ON a.role_id = r.id ORDER BY a.name");
-        defer stmt.finalize();
-        var result = std.array_list.Managed(u8).init(alloc);
-        try result.appendSlice("[");
-        var first = true;
-        while (true) {
-            const row = stmt.step() catch break;
-            if (row != .row) break;
-            if (!first) try result.append(',');
-            first = false;
-            const agent_id = stmt.columnInt64(0);
-            const name = stmt.columnText(1) orelse "";
-            const capabilities = stmt.columnText(2) orelse "";
-            const description = stmt.columnText(3);
-            const role_id = stmt.columnInt64Safe(4);
-            const role_name = stmt.columnText(5) orelse "";
-            const entry = try std.fmt.allocPrint(alloc, \\{{"id":{d},"name":"{s}","capabilities":"{s}","description":"{s}","role_id":{s},"role_name":"{s}"}}
-            , .{ agent_id, name, capabilities, description orelse "", if (role_id) |r| std.fmt.allocPrint(alloc, "{d}", .{r}) catch "null" else "null", role_name });
-            try result.appendSlice(entry);
-            alloc.free(entry);
-        }
-        try result.appendSlice("]");
-        return result.toOwnedSlice() catch return error.OutOfMemory;
+            try result.appendSlice("]");
+            return result.toOwnedSlice() catch return error.OutOfMemory;
+        },
+        .POST => {
+            const body_str = body orelse return errJson(alloc, "missing_body");
+            const parsed = std.json.parseFromSliceLeaky(AgentCreatePayload, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
+            validation.validateAgent(parsed.name, parsed.capabilities) catch |err| return errJson(alloc, @errorName(err));
+            var stmt = try conn.prepare("INSERT INTO agent_profiles (name, capabilities, description, role_id) VALUES (?, ?, ?, ?) RETURNING id");
+            defer stmt.finalize();
+            stmt.bindText(1, parsed.name);
+            stmt.bindText(2, parsed.capabilities);
+            if (parsed.description) |d| stmt.bindText(3, d) else stmt.bindNull(3);
+            if (parsed.role_id) |rid| stmt.bindInt64(4, rid) else stmt.bindNull(4);
+            _ = try stmt.step();
+            const new_id = stmt.columnInt64(0);
+            return std.fmt.allocPrint(alloc, \\{{"id":{d},"name":"{s}"}}
+            , .{ new_id, parsed.name });
+        },
+        .PUT => {
+            if (id == null) return errJson(alloc, "missing_id");
+            const body_str = body orelse return errJson(alloc, "missing_body");
+            const parsed = std.json.parseFromSliceLeaky(AgentUpdatePayload, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
+            var stmt = try conn.prepare("UPDATE agent_profiles SET name = ?, capabilities = ?, description = ?, role_id = ? WHERE id = ?");
+            defer stmt.finalize();
+            stmt.bindText(1, parsed.name);
+            stmt.bindText(2, parsed.capabilities);
+            if (parsed.description) |d| stmt.bindText(3, d) else stmt.bindNull(3);
+            if (parsed.role_id) |rid| stmt.bindInt64(4, rid) else stmt.bindNull(4);
+            stmt.bindInt64(5, id.?);
+            _ = try stmt.step();
+            return alloc.dupe(u8, "{\"success\":true}");
+        },
+        .DELETE => {
+            if (id == null) return errJson(alloc, "missing_id");
+            entities_svc.deleteAgent(&service, id.?) catch |err| return errJson(alloc, @errorName(err));
+            return alloc.dupe(u8, "{\"success\":true}");
+        },
+        else => return errJson(alloc, "method_not_allowed"),
     }
-    if (method == .POST) {
-        const body_str = body orelse return errJson(alloc, "missing_body");
-        const parsed = std.json.parseFromSliceLeaky(AgentCreatePayload, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
-        validation.validateAgent(parsed.name, parsed.capabilities) catch |err| return errJson(alloc, @errorName(err));
-        var stmt = try conn.prepare("INSERT INTO agent_profiles (name, capabilities, description, role_id) VALUES (?, ?, ?, ?) RETURNING id");
-        defer stmt.finalize();
-        stmt.bindText(1, parsed.name);
-        stmt.bindText(2, parsed.capabilities);
-        if (parsed.description) |d| stmt.bindText(3, d) else stmt.bindNull(3);
-        if (parsed.role_id) |rid| stmt.bindInt64(4, rid) else stmt.bindNull(4);
-        _ = try stmt.step();
-        const new_id = stmt.columnInt64(0);
-        return std.fmt.allocPrint(alloc, \\{{"id":{d},"name":"{s}"}}
-        , .{ new_id, parsed.name });
-    }
-    if (method == .PUT and id != null) {
-        const body_str = body orelse return errJson(alloc, "missing_body");
-        const parsed = std.json.parseFromSliceLeaky(AgentUpdatePayload, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
-        var stmt = try conn.prepare("UPDATE agent_profiles SET name = ?, capabilities = ?, description = ?, role_id = ? WHERE id = ?");
-        defer stmt.finalize();
-        stmt.bindText(1, parsed.name);
-        stmt.bindText(2, parsed.capabilities);
-        if (parsed.description) |d| stmt.bindText(3, d) else stmt.bindNull(3);
-        if (parsed.role_id) |rid| stmt.bindInt64(4, rid) else stmt.bindNull(4);
-        stmt.bindInt64(5, id.?);
-        _ = try stmt.step();
-        return alloc.dupe(u8, "{\"success\":true}");
-    }
-    return errJson(alloc, "method_not_allowed");
 }
 
 const AgentCreatePayload = struct { name: []const u8, capabilities: []const u8, description: ?[]const u8 = null, role_id: ?i64 = null };
@@ -1452,4 +1576,47 @@ fn handleMemoriesApi(conn: *db.Connection, alloc: std.mem.Allocator, method: std
     }
 
     return errJson(alloc, "method_not_allowed");
+}
+
+// ─── Config API ───
+
+const ConfigSetPayload = struct { key: []const u8, value: []const u8 };
+
+fn handleConfigApi(conn: *db.Connection, alloc: std.mem.Allocator, method: std.http.Method, it: *std.mem.SplitIterator(u8, .scalar), body: ?[]u8) ![]u8 {
+    const project_id_str = it.next();
+    var service = svc.init(conn);
+
+    switch (method) {
+        .GET => {
+            if (project_id_str == null) return errJson(alloc, "missing_project_id");
+            const project_id = parseId(project_id_str.?) catch return errJson(alloc, "invalid_id");
+            var configs = project_svc.getConfig(&service, alloc, project_id) catch |err| return errJson(alloc, @errorName(err));
+            defer {
+                for (configs.items) |c| {
+                    alloc.free(c.key);
+                    alloc.free(c.value);
+                }
+                configs.deinit(alloc);
+            }
+            var result = std.array_list.Managed(u8).init(alloc);
+            try result.appendSlice("[");
+            for (configs.items, 0..) |c, i| {
+                if (i > 0) try result.append(',');
+                const entry = try std.fmt.allocPrint(alloc, "{{\"key\":\"{s}\",\"value\":\"{s}\"}}", .{ c.key, c.value });
+                try result.appendSlice(entry);
+                alloc.free(entry);
+            }
+            try result.appendSlice("]");
+            return result.toOwnedSlice() catch return error.OutOfMemory;
+        },
+        .POST => {
+            if (project_id_str == null) return errJson(alloc, "missing_project_id");
+            const project_id = parseId(project_id_str.?) catch return errJson(alloc, "invalid_id");
+            const body_str = body orelse return errJson(alloc, "missing_body");
+            const parsed = std.json.parseFromSliceLeaky(ConfigSetPayload, alloc, body_str, .{}) catch return errJson(alloc, "invalid_json");
+            project_svc.setConfig(&service, project_id, parsed.key, parsed.value) catch |err| return errJson(alloc, @errorName(err));
+            return alloc.dupe(u8, "{\"success\":true}");
+        },
+        else => return errJson(alloc, "method_not_allowed"),
+    }
 }

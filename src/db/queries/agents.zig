@@ -87,3 +87,11 @@ pub fn listAll(conn: *db.Connection, allocator: std.mem.Allocator) !std.ArrayLis
     }
     return results;
 }
+
+/// Delete an agent profile by ID.
+pub fn delete(conn: *db.Connection, agent_id: i64) !void {
+    var stmt = try conn.prepare("DELETE FROM agent_profiles WHERE id = ?");
+    defer stmt.finalize();
+    stmt.bindInt64(1, agent_id);
+    _ = try stmt.step();
+}

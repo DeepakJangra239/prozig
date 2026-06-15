@@ -122,3 +122,37 @@ pub fn updatePartial(conn: *db.Connection, allocator: std.mem.Allocator, epic_id
     stmt.bindInt64(@intCast(idx), epic_id);
     _ = try stmt.step();
 }
+
+/// Delete an epic and all its child data (stories, tasks, subtasks).
+/// This function is designed to be called within a transaction.
+pub fn deleteWithChildren(conn: *db.Connection, epic_id: i64) !void {
+    // Delete subtasks for tasks in stories
+    var stmt = try conn.prepare(
+        \\DELETE FROM subtasks WHERE task_id IN (
+        \\SELECT id FROM tasks WHERE story_id IN (
+        \\SELECT id FROM stories WHERE epic_id = ?))
+    );
+    defer stmt.finalize();
+    stmt.bindInt64(1, epic_id);
+    _ = try stmt.step();
+
+    // Delete tasks
+    var delTasks = try conn.prepare(
+        \\DELETE FROM tasks WHERE story_id IN (SELECT id FROM stories WHERE epic_id = ?)
+    );
+    defer delTasks.finalize();
+    delTasks.bindInt64(1, epic_id);
+    _ = try delTasks.step();
+
+    // Delete stories
+    var delStories = try conn.prepare("DELETE FROM stories WHERE epic_id = ?");
+    defer delStories.finalize();
+    delStories.bindInt64(1, epic_id);
+    _ = try delStories.step();
+
+    // Delete epic
+    var delEpic = try conn.prepare("DELETE FROM epics WHERE id = ?");
+    defer delEpic.finalize();
+    delEpic.bindInt64(1, epic_id);
+    _ = try delEpic.step();
+}

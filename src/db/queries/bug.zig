@@ -111,3 +111,38 @@ pub fn delete(conn: *db.Connection, bug_id: i64) !void {
     stmt.bindInt64(1, bug_id);
     _ = try stmt.step();
 }
+
+/// PATCH update for bugs — only the provided fields are written. A null
+/// argument means "leave unchanged". Empty strings are NOT allowed: callers
+/// must validate content (validation.validate*Opt) before calling this.
+/// Always bumps `updated_at` to now so consumers can detect any change.
+pub fn updatePartial(conn: *db.Connection, allocator: std.mem.Allocator, bug_id: i64, title: ?[]const u8, description: ?[]const u8, severity: ?[]const u8) !void {
+    if (title == null and description == null and severity == null) {
+        return error.NoFieldsToUpdate;
+    }
+    var sql_buf = std.array_list.Managed(u8).init(allocator);
+    defer sql_buf.deinit();
+    try sql_buf.appendSlice("UPDATE bugs SET updated_at = datetime('now')");
+    if (title != null) try sql_buf.appendSlice(", title = ?");
+    if (description != null) try sql_buf.appendSlice(", description = ?");
+    if (severity != null) try sql_buf.appendSlice(", severity = ?");
+    try sql_buf.appendSlice(" WHERE id = ?");
+
+    var stmt = try conn.prepare(sql_buf.items);
+    defer stmt.finalize();
+    var idx: usize = 1;
+    if (title) |t| {
+        stmt.bindText(@intCast(idx), t);
+        idx += 1;
+    }
+    if (description) |d| {
+        stmt.bindText(@intCast(idx), d);
+        idx += 1;
+    }
+    if (severity) |s| {
+        stmt.bindText(@intCast(idx), s);
+        idx += 1;
+    }
+    stmt.bindInt64(@intCast(idx), bug_id);
+    _ = try stmt.step();
+}

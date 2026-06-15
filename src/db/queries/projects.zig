@@ -152,6 +152,77 @@ pub fn update(conn: *db.Connection, project_id: i64, name: ?[]const u8, descript
 /// Delete a project and all its data
 pub fn delete(conn: *db.Connection, project_id: i64) !void {
     // Delete in reverse dependency order
+    // 1. Memory tables (project-scoped)
+    {
+        var stmt = try conn.prepare("DELETE FROM agent_memory WHERE project_id = ?");
+        defer stmt.finalize();
+        stmt.bindInt64(1, project_id);
+        _ = try stmt.step();
+    }
+    {
+        var stmt = try conn.prepare("DELETE FROM project_summaries WHERE project_id = ?");
+        defer stmt.finalize();
+        stmt.bindInt64(1, project_id);
+        _ = try stmt.step();
+    }
+    {
+        var stmt = try conn.prepare("DELETE FROM memory_usage WHERE project_id = ?");
+        defer stmt.finalize();
+        stmt.bindInt64(1, project_id);
+        _ = try stmt.step();
+    }
+    // 2. Bugs and comments (project-scoped)
+    {
+        var stmt = try conn.prepare("DELETE FROM bugs WHERE project_id = ?");
+        defer stmt.finalize();
+        stmt.bindInt64(1, project_id);
+        _ = try stmt.step();
+    }
+    {
+        var stmt = try conn.prepare("DELETE FROM comments WHERE project_id = ?");
+        defer stmt.finalize();
+        stmt.bindInt64(1, project_id);
+        _ = try stmt.step();
+    }
+    // 3. Config/workflow (project-scoped)
+    {
+        var stmt = try conn.prepare("DELETE FROM project_configs WHERE project_id = ?");
+        defer stmt.finalize();
+        stmt.bindInt64(1, project_id);
+        _ = try stmt.step();
+    }
+    {
+        var stmt = try conn.prepare("DELETE FROM workflow_transitions WHERE project_id = ?");
+        defer stmt.finalize();
+        stmt.bindInt64(1, project_id);
+        _ = try stmt.step();
+    }
+    {
+        var stmt = try conn.prepare("DELETE FROM workflow_states WHERE project_id = ?");
+        defer stmt.finalize();
+        stmt.bindInt64(1, project_id);
+        _ = try stmt.step();
+    }
+    // 4. Roles (project-scoped) - null out agent_profiles.role_id first
+    {
+        var stmt = try conn.prepare("UPDATE agent_profiles SET role_id = NULL WHERE role_id IN (SELECT id FROM agent_roles WHERE project_id = ?)");
+        defer stmt.finalize();
+        stmt.bindInt64(1, project_id);
+        _ = try stmt.step();
+    }
+    {
+        var stmt = try conn.prepare("DELETE FROM role_permissions WHERE role_id IN (SELECT id FROM agent_roles WHERE project_id = ?)");
+        defer stmt.finalize();
+        stmt.bindInt64(1, project_id);
+        _ = try stmt.step();
+    }
+    {
+        var stmt = try conn.prepare("DELETE FROM agent_roles WHERE project_id = ?");
+        defer stmt.finalize();
+        stmt.bindInt64(1, project_id);
+        _ = try stmt.step();
+    }
+    // 5. Existing cleanup (subtasks, tasks, wiki, stories, epics, dependencies, projects)
     {
         var stmt = try conn.prepare("DELETE FROM subtasks WHERE task_id IN (SELECT id FROM tasks WHERE story_id IN (SELECT id FROM stories WHERE epic_id IN (SELECT id FROM epics WHERE project_id = ?)))");
         defer stmt.finalize();

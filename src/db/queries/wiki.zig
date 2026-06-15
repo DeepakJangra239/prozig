@@ -170,3 +170,11 @@ pub fn searchByProject(conn: *db.Connection, allocator: std.mem.Allocator, proje
     }
     return results;
 }
+
+/// Delete a wiki page by ID.
+pub fn delete(conn: *db.Connection, page_id: i64) !void {
+    var stmt = try conn.prepare("DELETE FROM wiki_pages WHERE id = ?");
+    defer stmt.finalize();
+    stmt.bindInt64(1, page_id);
+    _ = try stmt.step();
+}

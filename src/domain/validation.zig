@@ -81,6 +81,54 @@ pub fn validateAcceptanceCriteriaOpt(ac: ?[]const u8) !void {
     if (ac) |a| if (a.len < MIN_ACCEPTANCE_CRITERIA_LEN) return error.MissingField;
 }
 
+/// Validate severity for bug updates (optional field).
+pub fn validateSeverityOpt(severity: ?[]const u8) !void {
+    if (severity) |s| {
+        if (s.len == 0) return error.MissingField;
+        if (!std.mem.eql(u8, s, "critical") and
+            !std.mem.eql(u8, s, "high") and
+            !std.mem.eql(u8, s, "medium") and
+            !std.mem.eql(u8, s, "low")) return error.InvalidField;
+    }
+}
+
+/// Validate epic partial update fields (at least one must be provided).
+pub fn validateEpicOpt(title: ?[]const u8, description: ?[]const u8) !void {
+    if (title == null and description == null) return error.MissingField;
+    try validateTitleOpt(title);
+    try validateDescriptionOpt(description);
+}
+
+/// Validate story partial update fields (at least one must be provided).
+pub fn validateStoryOpt(title: ?[]const u8, description: ?[]const u8, acceptance_criteria: ?[]const u8) !void {
+    if (title == null and description == null and acceptance_criteria == null) return error.MissingField;
+    try validateTitleOpt(title);
+    try validateDescriptionOpt(description);
+    try validateAcceptanceCriteriaOpt(acceptance_criteria);
+}
+
+/// Validate task partial update fields (at least one must be provided).
+pub fn validateTaskOpt(title: ?[]const u8, description: ?[]const u8) !void {
+    if (title == null and description == null) return error.MissingField;
+    try validateTitleOpt(title);
+    try validateDescriptionOpt(description);
+}
+
+/// Validate subtask partial update fields (at least one must be provided).
+pub fn validateSubTaskOpt(title: ?[]const u8, description: ?[]const u8) !void {
+    if (title == null and description == null) return error.MissingField;
+    try validateTitleOpt(title);
+    try validateDescriptionOpt(description);
+}
+
+/// Validate bug partial update fields (at least one must be provided).
+pub fn validateBugOpt(title: ?[]const u8, description: ?[]const u8, severity: ?[]const u8) !void {
+    if (title == null and description == null and severity == null) return error.MissingField;
+    try validateTitleOpt(title);
+    try validateDescriptionOpt(description);
+    try validateSeverityOpt(severity);
+}
+
 /// Validate agent profile fields
 pub fn validateAgent(name: []const u8, capabilities: []const u8) !void {
     if (name.len == 0) return error.MissingField;

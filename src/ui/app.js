@@ -192,11 +192,26 @@ function renderProjectCards() {
   }
   c.innerHTML = projects.map(p => `
     <article class="card" data-project-id="${p.id}">
-      <h3>${esc(p.name)}</h3>
-      <p class="meta">${esc(p.root_path||'')}</p>
+      <div style="display:flex;justify-content:space-between;align-items:start">
+        <div>
+          <h3>${esc(p.name)}</h3>
+          <p class="meta">${esc(p.root_path||'')}</p>
+        </div>
+        <button class="outline small" style="color:var(--danger);border-color:var(--danger)" data-project-delete="${p.id}" title="Delete ${esc(p.name)}">Delete</button>
+      </div>
     </article>
   `).join('');
   c.onclick = (e) => {
+    // Handle project delete button clicks
+    const deleteBtn = e.target.closest('[data-project-delete]');
+    if (deleteBtn) {
+      e.stopPropagation();
+      const projectId = Number(deleteBtn.dataset.projectDelete);
+      const project = projects.find(p => p.id === projectId);
+      if (project) deleteProject(projectId, project.name);
+      return;
+    }
+    // Handle project card clicks
     const card = e.target.closest('[data-project-id]');
     if (card) selectProject(Number(card.dataset.projectId));
   };
@@ -963,6 +978,28 @@ async function doDelete(type, id) {
   } catch (e) { ot.toast('Delete failed: ' + e.message, '', { variant: 'danger' }); }
 }
 
+function deleteProject(id, name) {
+  openModal('Delete Project', `
+    <p>Are you sure you want to delete <strong>${esc(name)}</strong>?</p>
+    <p style="color:var(--danger);font-size:var(--text-8)">
+      This will permanently delete all epics, stories, tasks, subtasks, bugs, wiki pages, roles, workflows, and memories for this project.
+      This action cannot be undone.
+    </p>
+  `, 'Delete', async () => {
+    try {
+      await apiDel(`/projects/${id}`);
+      ot.toast('Project deleted', '', { variant: 'success' });
+      if (currentProject === id) {
+        currentProject = null;
+        try { localStorage.removeItem('prozig_project'); } catch {}
+      }
+      loadDashboard();
+    } catch (e) {
+      ot.toast('Delete failed: ' + e.message, '', { variant: 'danger' });
+    }
+  });
+}
+
 // ─── Wiki ───
 async function loadWiki() {
   if (!currentProject) { $('#wiki-content').innerHTML = '<div class="empty-state"><p>Select a project to view wiki pages.</p></div>'; $('#wiki-sidebar').innerHTML = ''; return; }
@@ -1035,7 +1072,10 @@ function renderAgents() {
   $btn.onclick = showNewAgentForm;
   c.innerHTML = agents.map(a => `
     <article class="card card-agent" onclick="showEditAgent(${a.id})">
-      <h3>${esc(a.name)}</h3>
+      <div style="display:flex;align-items:center;gap:var(--space-2)">
+        <h3 style="margin:0">${esc(a.name)}</h3>
+        <span class="badge" data-variant="secondary" style="font-size:var(--text-9)">#${a.id}</span>
+      </div>
       <p class="meta">${esc(a.description||'')}</p>
       <div class="agent-capabilities">${(a.capabilities||'').split(',').map(c => `<span class="tag">${esc(c.trim())}</span>`).join('')}</div>
       ${a.role_name ? `<div style="margin-top:var(--space-1)"><span class="tag" style="background:var(--primary-ghost);color:var(--primary)">${esc(a.role_name)}</span></div>` : ''}
